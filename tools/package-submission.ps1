@@ -127,6 +127,16 @@ try {
   if ($score.artifact -ne $RequiredArtifact) {
     throw "score.json artifact must be $RequiredArtifact"
   }
+  $artifactPath = Resolve-RepoPath $RepoRoot $score.artifact
+  if (-not (Test-Path -LiteralPath $artifactPath)) {
+    throw "score.json artifact is missing: $($score.artifact)"
+  }
+  $artifactBytes = (Get-Item -LiteralPath $artifactPath).Length
+  if ($artifactBytes -le 0) {
+    throw "score.json artifact must not be empty: $($score.artifact)"
+  }
+  Write-Host "Hashing artifact: $($score.artifact) ($artifactBytes bytes)"
+  $artifactSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
   foreach ($metricName in @("toffoli", "ccx", "ccz", "clifford", "qubits", "ops")) {
     if (-not $score.metrics.PSObject.Properties.Name.Contains($metricName)) {
       throw "score.json metrics.$metricName is missing"
@@ -169,6 +179,8 @@ try {
     metrics = $score.metrics
     validation = $score.validation
     artifact = $score.artifact
+    artifactBytes = $artifactBytes
+    artifactSha256 = $artifactSha256
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
   }
   [System.IO.File]::WriteAllText(
@@ -179,6 +191,7 @@ try {
 
   Write-Host "Packaged editable paths: $($normalizedPaths -join ', ')"
   Write-Host "Archive: $archivePath ($archiveBytes bytes)"
+  Write-Host "Artifact: $($score.artifact) ($artifactBytes bytes, sha256 $artifactSha256)"
   Write-Host "Note: $noteOutPath ($noteBytes bytes)"
   Write-Host "Metadata: $metadataPath"
 }

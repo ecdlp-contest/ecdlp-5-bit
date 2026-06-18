@@ -152,6 +152,7 @@ The package helper enforces:
 - benchmark `shor-ecdlp-5bit-v1`
 - validation gate `fiat_shamir_shor_ecdlp_5bit_variable_q_oracle`
 - editable path `src/shor_oracle`
+- `ops.bin` byte/hash commitments
 - 10 KiB public note cap
 - 25 MiB source archive cap
 

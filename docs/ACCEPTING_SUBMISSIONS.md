@@ -42,7 +42,13 @@ Package metadata must include:
 ```text
 benchmark: shor-ecdlp-5bit-v1
 editablePaths: ["src/shor_oracle"]
+artifactBytes: <ops.bin byte size>
+artifactSha256: <ops.bin sha256>
 ```
+
+Compare `artifactBytes` and `artifactSha256` against the maintainer rerun for
+the same accepted source. They are not expected to match the original baseline
+after a real optimization changes `ops.bin`.
 
 Use `tools/prepare-acceptance.ps1` to generate a commit-message draft with the
 score, metrics, validation gate, model attribution, and co-author trailer.
