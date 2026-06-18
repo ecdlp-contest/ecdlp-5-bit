@@ -1,0 +1,25 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup benchmark
+        run: ./setup.sh
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Trusted benchmark
+        run: ./benchmark.sh --note "ci validation"
+
+      - name: Package submission boundary
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools/package-submission.ps1 -NoteFile src/shor_oracle/memory/README.md -Model "CI"

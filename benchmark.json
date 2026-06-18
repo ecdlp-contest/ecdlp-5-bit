@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "shor-ecdlp-5bit-v1",
+  "description": "Optimize the primitive CCX/CCZ score for a 5-bit Shor ECDLP oracle circuit.",
+  "scoreModel": "primitive-ccx-ccz-v1",
+  "scoreNote": "score = rounded average executed Toffoli count times logical qubits.",
+  "category": "rust",
+  "direction": "-",
+  "editablePaths": [
+    "src/shor_oracle"
+  ],
+  "setupCommand": [
+    "bash",
+    "-lc",
+    "./setup.sh"
+  ],
+  "benchmarkCommand": [
+    "bash",
+    "-lc",
+    "./benchmark.sh"
+  ],
+  "scorePath": "score.json"
+}

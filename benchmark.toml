@@ -1,0 +1,13 @@
+track_id = "shor-ecdlp-5bit-v1"
+schema_version = "ecdlp-primitive-ops-v1"
+editable_path = "src/shor_oracle/"
+trusted_stage = "src/bin/eval_circuit.rs"
+validation_shots = 9024
+validation_seed = "ecdlp-shor-ecdlp-5bit-variable-q-oracle-fiat-shamir-v1"
+validator = "src/bin/eval_circuit.rs"
+score_model = "primitive-ccx-ccz-v1"
+score_note = "score = rounded average executed Toffoli count times logical qubits"
+build_command = "cargo run --release --bin build_circuit"
+eval_command = "cargo run --release --bin eval_circuit -- --note baseline"
+score_file = "score.json"
+results_file = "results.tsv"
