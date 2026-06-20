@@ -13,7 +13,7 @@ both.
 
 1. Edit only `src/shor_oracle/`.
 2. Run `cargo fmt --check`.
-3. Run `ecdlp run --note "short experiment label"` or `.\benchmark.ps1`.
+3. Run `./ecdlp.js run --note "short experiment label"` or `.\benchmark.ps1`.
 4. Record score, Toffoli, qubits, ops, and the idea tested in
    `src/shor_oracle/memory/`.
 5. Package only after a trusted ranked run.

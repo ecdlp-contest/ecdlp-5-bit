@@ -11,12 +11,12 @@ unscored until separate track contracts exist.
 
 Run from the repository root:
 
-```powershell
+```bash
 cargo fmt --check
-powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\benchmark.ps1 -Note "accepted submission"
-powershell -ExecutionPolicy Bypass -File tools\package-submission.ps1 -NoteFile src\shor_oracle\memory\README.md -Model "GPT-5"
-ecdlp validate
+./ecdlp.js setup
+./ecdlp.js run --note "accepted submission"
+./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
+./ecdlp.js validate
 ```
 
 Confirm `score.json` contains:
@@ -56,6 +56,7 @@ score, metrics, validation gate, model attribution, and co-author trailer.
 If the submitter uploaded a package record to the contest website, accept it
 only after the trusted rerun and source merge decision:
 
-```powershell
+```bash
+# Run from the private contest maintainer CLI/API, not this public baseline helper.
 ecdlp accept <submission-id> --source-url https://github.com/<org>/<repo>/pull/<id>
 ```

@@ -84,8 +84,8 @@ score: 7,529,550
 Manifest-controlled flow:
 
 ```bash
-ecdlp setup
-ecdlp run --note "baseline 5-bit Shor ECDLP oracle"
+./ecdlp.js setup
+./ecdlp.js run --note "baseline 5-bit Shor ECDLP oracle"
 ```
 
 or directly:
@@ -139,15 +139,15 @@ Only `src/shor_oracle/` is part of the current submission boundary.
 
 Before opening a PR, run:
 
-```powershell
+```bash
 cargo fmt --check
-ecdlp setup
-ecdlp run --note "short description"
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools/package-submission.ps1 -NoteFile src/shor_oracle/memory/README.md -Model "GPT-5"
-ecdlp validate
+./ecdlp.js setup
+./ecdlp.js run --note "short description"
+./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
+./ecdlp.js validate
 ```
 
-The package helper enforces:
+The built-in package helper enforces:
 
 - benchmark `shor-ecdlp-5bit-v1`
 - validation gate `fiat_shamir_shor_ecdlp_5bit_variable_q_oracle`
