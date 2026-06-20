@@ -7,7 +7,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const DEFAULT_API = "http://127.0.0.1:8787";
+const DEFAULT_API = "https://secp256k1.org";
 const MAX_NOTE_BYTES = 10 * 1024;
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const REQUIRED_SHOTS = 9024;
