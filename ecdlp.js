@@ -3,11 +3,13 @@
 
 const crypto = require("crypto");
 const fs = require("fs");
+const http = require("http");
+const https = require("https");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const DEFAULT_API = "https://secp256k1.org";
+const DEFAULT_API = "https://www.secp256k1.org";
 const MAX_NOTE_BYTES = 10 * 1024;
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const REQUIRED_SHOTS = 9024;
@@ -103,11 +105,12 @@ function writeConfig(config) {
 }
 
 function apiUrl(args = []) {
-  return (getFlag(args, "--api") || process.env.ECDLP_API_URL || readConfig().api_url || DEFAULT_API).replace(/\/$/, "");
+  const raw = (getFlag(args, "--api") || process.env.ECDLP_API_URL || readConfig().api_url || DEFAULT_API).replace(/\/$/, "");
+  return raw === "https://secp256k1.org" ? DEFAULT_API : raw;
 }
 
 function apiToken() {
-  return process.env.ECDLP_API_TOKEN || readConfig().api_token || "";
+  return process.env.ECDLP_API_TOKEN || process.env.ECDLP_API_KEY || readConfig().api_token || "";
 }
 
 function authHeaders() {
@@ -413,8 +416,47 @@ function readArchiveInfo(args, filePath, metadata) {
   return { archive_sha256: sha256File(archivePath), archive_size_bytes: fs.statSync(archivePath).size };
 }
 
+function nodeFetch(url, options = {}, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const client = target.protocol === "http:" ? http : https;
+    const request = client.request(target, {
+      method: options.method || "GET",
+      headers: options.headers || {}
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", async () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          if (redirects >= 5) {
+            reject(new Error("too many redirects"));
+            return;
+          }
+          const nextUrl = new URL(response.headers.location, target).toString();
+          try {
+            resolve(await nodeFetch(nextUrl, options, redirects + 1));
+          } catch (error) {
+            reject(error);
+          }
+          return;
+        }
+        resolve({
+          ok: response.statusCode >= 200 && response.statusCode < 300,
+          status: response.statusCode,
+          text: async () => body
+        });
+      });
+    });
+    request.on("error", reject);
+    if (options.body) request.write(options.body);
+    request.end();
+  });
+}
+
 async function requestJson(url, options = {}) {
-  const response = await fetch(url, {
+  const request = typeof fetch === "function" ? fetch : nodeFetch;
+  const response = await request(url, {
     ...options,
     headers: { "content-type": "application/json", ...(options.headers || {}) }
   });
