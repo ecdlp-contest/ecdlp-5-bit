@@ -135,9 +135,22 @@ src/full_shor/    future full-Shor integration layer
 
 Only `src/shor_oracle/` is part of the current submission boundary.
 
-## Submission Flow
+## Official Submission Flow
 
-Before opening a PR, run:
+This repository is the public contest baseline and submission surface for
+`shor-ecdlp-5bit-v1`. You may keep your fork or branch private while testing,
+but the package submitted to the contest server must be built from this public
+baseline contract.
+
+Submissions require a contest API key. Open <https://secp256k1.org/account>,
+sign in with GitHub, create an API key, then save it locally:
+
+```bash
+./ecdlp.js login <api-key>
+./ecdlp.js config
+```
+
+Build, score, package, and validate from the repository root:
 
 ```bash
 cargo fmt --check
@@ -147,14 +160,34 @@ cargo fmt --check
 ./ecdlp.js validate
 ```
 
-The built-in package helper enforces:
+Submit the package and poll server-side validation:
+
+```bash
+./ecdlp.js submit --source-url https://github.com/<you>/<repo>/pull/<id> --watch
+```
+
+If you already have a submission id, poll it directly:
+
+```bash
+./ecdlp.js status <submission-id> --watch --poll-interval 10
+./ecdlp.js logs <submission-id>
+./ecdlp.js leaderboard
+```
+
+The built-in package helper enforces the official boundary before the server
+sees the package:
 
 - benchmark `shor-ecdlp-5bit-v1`
 - validation gate `fiat_shamir_shor_ecdlp_5bit_variable_q_oracle`
-- editable path `src/shor_oracle`
+- editable path exactly `src/shor_oracle`
 - `ops.bin` byte/hash commitments
 - 10 KiB public note cap
 - 25 MiB source archive cap
+
+The server reruns the trusted worker before accepting a result. After the
+trusted worker passes, the server can auto-accept the submission and arrange the
+official merge into the contest GitHub main branch with the contestant credited
+as co-author.
 
 ## Scope Note
 

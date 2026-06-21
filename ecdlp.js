@@ -44,9 +44,25 @@ const VALUE_FLAGS = new Set([
   "--note",
   "--note-file",
   "--out",
+  "--poll-interval",
   "--source-url",
+  "--timeout",
   "--track"
 ]);
+
+function hasFlag(args, name) {
+  return args.includes(name);
+}
+
+function numberFlag(args, name, fallback) {
+  const raw = getFlag(args, name, null);
+  if (raw === null) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative number`);
+  }
+  return value;
+}
 
 function usage(exitCode = 0) {
   console.log(`ecdlp baseline CLI
@@ -56,10 +72,10 @@ Usage:
   ./ecdlp.js run [--note "short note"]
   ./ecdlp.js package --model MODEL [--note-file PATH] [--out dist]
   ./ecdlp.js validate [dist/submission-metadata.json]
-  ./ecdlp.js submit [dist/submission-metadata.json] [--source-url URL]
+  ./ecdlp.js submit [dist/submission-metadata.json] [--source-url URL] [--watch]
   ./ecdlp.js login <api-key> [--api ${DEFAULT_API}]
   ./ecdlp.js config
-  ./ecdlp.js status <submission-id>
+  ./ecdlp.js status <submission-id> [--watch] [--poll-interval 10] [--timeout 0]
   ./ecdlp.js logs <submission-id>
   ./ecdlp.js leaderboard [--track TRACK_ID]
 `);
@@ -353,6 +369,27 @@ function printValidation(result) {
   console.log(`status: ${result.ok ? "ranked" : "failed"}`);
 }
 
+function printSubmissionStatus(response) {
+  console.log(`submission_id: ${response.submission_id || response.id}`);
+  console.log(`track: ${response.track_id}`);
+  console.log(`server_status: ${response.status}`);
+  console.log(`rank_status: ${response.rank_status}`);
+  if (response.metrics?.score !== undefined) console.log(`score: ${response.metrics.score}`);
+  if (response.failure_code) console.log(`failure_code: ${response.failure_code}`);
+  if (response.accepted_by_github_login) console.log(`accepted_by: @${response.accepted_by_github_login}`);
+  if (response.trusted_worker_passed_at) console.log(`trusted_worker_passed_at: ${response.trusted_worker_passed_at}`);
+  if (response.merge_url) console.log(`merge_url: ${response.merge_url}`);
+  if (response.merge_commit_sha) console.log(`merge_commit_sha: ${response.merge_commit_sha}`);
+}
+
+function isTerminalSubmission(response) {
+  return response.status === "ranked" || response.status === "failed";
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function readNoteOption(args, filePath, metadata) {
   const note = getFlag(args, "--note");
   const noteFile = getFlag(args, "--note-file");
@@ -408,6 +445,32 @@ function showConfig(args) {
   console.log(`config: ${configPath()}`);
 }
 
+async function fetchSubmissionStatus(id, args = []) {
+  return requestJson(`${apiUrl(args)}/api/submissions/${encodeURIComponent(id)}`, { headers: authHeaders() });
+}
+
+async function pollSubmissionStatus(id, args = []) {
+  const intervalSeconds = numberFlag(args, "--poll-interval", 10);
+  const timeoutSeconds = numberFlag(args, "--timeout", 0);
+  const started = Date.now();
+  let lastKey = "";
+  while (true) {
+    const response = await fetchSubmissionStatus(id, args);
+    const key = `${response.status}:${response.rank_status}:${response.merge_commit_sha || ""}:${response.failure_code || ""}`;
+    if (key !== lastKey) {
+      printSubmissionStatus(response);
+      lastKey = key;
+    } else {
+      console.log(`waiting: status=${response.status} rank_status=${response.rank_status}`);
+    }
+    if (isTerminalSubmission(response)) return response;
+    if (timeoutSeconds > 0 && Date.now() - started >= timeoutSeconds * 1000) {
+      throw new Error(`timed out waiting for ${id}`);
+    }
+    await sleep(intervalSeconds * 1000);
+  }
+}
+
 async function submit(filePath, args) {
   filePath = filePath || defaultSubmissionPath();
   const metadata = readJson(filePath);
@@ -431,12 +494,23 @@ async function submit(filePath, args) {
   console.log(`submission_id: ${response.submission_id}`);
   console.log(`server_status: ${response.status}`);
   console.log(`rank_status: ${response.rank_status}`);
+  if (hasFlag(args, "--watch")) {
+    await pollSubmissionStatus(response.submission_id, args);
+  }
 }
 
 async function status(id, args) {
   if (!id) usage(1);
-  const response = await requestJson(`${apiUrl(args)}/api/submissions/${encodeURIComponent(id)}`, { headers: authHeaders() });
-  console.log(JSON.stringify(response, null, 2));
+  if (hasFlag(args, "--watch")) {
+    await pollSubmissionStatus(id, args);
+    return;
+  }
+  const response = await fetchSubmissionStatus(id, args);
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(response, null, 2));
+  } else {
+    printSubmissionStatus(response);
+  }
 }
 
 async function logs(id, args) {
