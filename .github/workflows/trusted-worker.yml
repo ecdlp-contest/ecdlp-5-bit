@@ -1,0 +1,56 @@
+name: Trusted Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run reproduction checks without posting trusted-pass"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      limit:
+        description: "Maximum pending submissions to process"
+        required: false
+        default: "1"
+  schedule:
+    - cron: "*/30 * * * *"
+
+concurrency:
+  group: trusted-worker-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  trusted-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ECDLP_API_URL: ${{ secrets.ECDLP_API_URL }}
+      ECDLP_TRUSTED_WORKER_TOKEN: ${{ secrets.ECDLP_TRUSTED_WORKER_TOKEN }}
+      ECDLP_WORKER_LIMIT: ${{ github.event.inputs.limit }}
+      ECDLP_WORKER_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+    steps:
+      - name: Check out contest repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check PowerShell
+        shell: bash
+        run: |
+          if ! command -v pwsh >/dev/null 2>&1; then
+            echo "PowerShell (pwsh) is required by tools/package-submission.ps1" >&2
+            exit 1
+          fi
+      - name: Run trusted worker
+        run: node tools/trusted-worker.mjs
