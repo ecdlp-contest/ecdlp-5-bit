@@ -413,7 +413,11 @@ function readArchiveInfo(args, filePath, metadata) {
       ? path.resolve(path.dirname(path.resolve(filePath)), metadata.archive)
       : null;
   if (!archivePath || !fs.existsSync(archivePath)) return {};
-  return { archive_sha256: sha256File(archivePath), archive_size_bytes: fs.statSync(archivePath).size };
+  return {
+    archive_sha256: sha256File(archivePath),
+    archive_size_bytes: fs.statSync(archivePath).size,
+    archive_base64: fs.readFileSync(archivePath).toString("base64")
+  };
 }
 
 function nodeFetch(url, options = {}, redirects = 0) {
