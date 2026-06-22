@@ -62,5 +62,25 @@ async function processSubmission(submission, manifest) {
   console.log("\nProcessing " + submission.submission_id + " (" + submission.track_id + ")");
   const archivePath = path.join(ROOT_DIR, ".trusted-submission.tar.gz"); await downloadArchive(submission, archivePath); validateArchiveEntries(manifest, archivePath); resetGeneratedOutputs(); for (const editablePath of manifest.editablePaths || []) fs.rmSync(path.join(ROOT_DIR, editablePath), { recursive: true, force: true }); run("tar", ["-xzf", archivePath, "-C", ROOT_DIR]); prepareScripts(); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "setup"]); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "run", "--note", NOTE_TEXT]); run("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(ROOT_DIR, "tools", "package-submission.ps1"), "-NoteFile", noteFileFor(manifest), "-Model", submission.submitted_model || "trusted-worker"]); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "validate", path.join(ROOT_DIR, "dist", "submission-metadata.json")]); const metadata = readJson(path.join(ROOT_DIR, "dist", "submission-metadata.json")); compareMetadata(metadata, submission); if (DRY_RUN) { console.log("dry-run: not committing source or posting trusted-pass"); return; } const acceptedCommit = commitAndPush(submission, manifest, metadata); const response = await requestJson(API_URL + "/api/submissions/" + encodeURIComponent(submission.submission_id) + "/trusted-pass", { method: "POST", body: JSON.stringify({ status: "passed", report: { worker: process.env.GITHUB_WORKFLOW || "contest-repo-trusted-worker", run_id: process.env.GITHUB_RUN_ID || null, accepted_repository: process.env.GITHUB_REPOSITORY || null, accepted_commit_sha: acceptedCommit, score: metadata.localScore, artifact_binary_sha256: metadata.artifactSha256, archive_sha256: submission.archive_sha256 || null } }) }); console.log("accepted " + response.submission_id + ": " + response.status + "/" + response.rank_status);
 }
-async function main() { if (process.argv.includes("--help") || process.argv.includes("-h")) return; if (!API_URL) throw new Error("ECDLP_API_URL is required"); if (!WORKER_TOKEN) throw new Error("ECDLP_TRUSTED_WORKER_TOKEN is required"); const manifest = readJson(path.join(ROOT_DIR, "benchmark.json")); const pending = await requestJson(API_URL + "/api/trusted-worker/submissions/pending?track_id=" + encodeURIComponent(manifest.name) + "&limit=" + encodeURIComponent(String(LIMIT))); if (!pending.rows.length) { console.log("No pending trusted-worker submissions for " + manifest.name + "."); return; } const failures = []; for (const submission of pending.rows) { try { await processSubmission(submission, manifest); } catch (error) { failures.push({ submission_id: submission.submission_id, error: error.message }); console.error("failed " + submission.submission_id + ": " + error.message); } } if (failures.length > 0) { console.error(JSON.stringify({ failures }, null, 2)); process.exit(1); } }
+async function reportTrustedFailure(submission, error) {
+  if (DRY_RUN) return;
+  try {
+    await requestJson(API_URL + "/api/submissions/" + encodeURIComponent(submission.submission_id) + "/trusted-pass", {
+      method: "POST",
+      body: JSON.stringify({
+        status: "failed",
+        report: {
+          worker: process.env.GITHUB_WORKFLOW || "contest-repo-trusted-worker",
+          run_id: process.env.GITHUB_RUN_ID || null,
+          accepted_repository: process.env.GITHUB_REPOSITORY || null,
+          archive_sha256: submission.archive_sha256 || null,
+          error: error.message
+        }
+      })
+    });
+  } catch (reportError) {
+    console.error("failed to report trusted-worker failure for " + submission.submission_id + ": " + reportError.message);
+  }
+}
+async function main() { if (process.argv.includes("--help") || process.argv.includes("-h")) return; if (!API_URL) throw new Error("ECDLP_API_URL is required"); if (!WORKER_TOKEN) throw new Error("ECDLP_TRUSTED_WORKER_TOKEN is required"); const manifest = readJson(path.join(ROOT_DIR, "benchmark.json")); const pending = await requestJson(API_URL + "/api/trusted-worker/submissions/pending?track_id=" + encodeURIComponent(manifest.name) + "&limit=" + encodeURIComponent(String(LIMIT))); if (!pending.rows.length) { console.log("No pending trusted-worker submissions for " + manifest.name + "."); return; } const failures = []; for (const submission of pending.rows) { try { await processSubmission(submission, manifest); } catch (error) { await reportTrustedFailure(submission, error); failures.push({ submission_id: submission.submission_id, error: error.message }); console.error("failed " + submission.submission_id + ": " + error.message); } } if (failures.length > 0) { console.error(JSON.stringify({ failures }, null, 2)); process.exit(1); } }
 main().catch((error) => { console.error("trusted worker error: " + error.message); process.exit(1); });
