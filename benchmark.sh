@@ -102,6 +102,8 @@ eval_circuit_bin="${target_abs}/release/eval_circuit"
 
 ops_scratch="$(cd "$(mktemp -d)" && pwd -P)"
 chmod 0777 "${ops_scratch}"
+install -m 0755 "${build_circuit_bin}" "${ops_scratch}/build_circuit"
+sandbox_build_circuit_bin="${ops_scratch}/build_circuit"
 bwrap_via_sudo=0
 
 if command -v bwrap >/dev/null 2>&1; then
@@ -130,14 +132,14 @@ if command -v bwrap >/dev/null 2>&1; then
     --die-with-parent
     --uid 65534
     --gid 65534
-    -- "${build_circuit_bin}"
+    -- "${sandbox_build_circuit_bin}"
   )
 elif [[ "$(uname -s)" == "Darwin" ]] && command -v sandbox-exec >/dev/null 2>&1; then
   macos_profile="(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"${ops_scratch}\"))(allow file-write* (subpath \"/dev\"))(deny network*)"
-  run_build=(sandbox-exec -p "${macos_profile}" /bin/bash -c 'cd "$1" && export TMPDIR="$1" && exec "$2"' _ "${ops_scratch}" "${build_circuit_bin}")
+  run_build=(sandbox-exec -p "${macos_profile}" /bin/bash -c 'cd "$1" && export TMPDIR="$1" && exec "$2"' _ "${ops_scratch}" "${sandbox_build_circuit_bin}")
 else
   echo "!! no sandbox available (bubblewrap/sandbox-exec); running build_circuit UNCONFINED (dev fallback)" >&2
-  run_build=(bash -c 'cd "$1" && exec "$2"' _ "${ops_scratch}" "${build_circuit_bin}")
+  run_build=(bash -c 'cd "$1" && exec "$2"' _ "${ops_scratch}" "${sandbox_build_circuit_bin}")
 fi
 
 cleanup_pgid=""
