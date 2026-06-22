@@ -11,11 +11,12 @@ const parsedLimit = Number(process.env.ECDLP_WORKER_LIMIT || 1);
 const LIMIT = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 1;
 const DRY_RUN = process.env.ECDLP_WORKER_DRY_RUN === "1" || process.argv.includes("--dry-run");
 const NOTE_TEXT = "trusted worker reproduction";
+const WORKER_ENV = { CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR || "target" };
 
 function readJson(filePath) { return JSON.parse(fs.readFileSync(path.resolve(filePath), "utf8")); }
 function run(command, args, options = {}) {
   console.log("> " + [command, ...args].join(" "));
-  const result = spawnSync(command, args, { cwd: options.cwd || ROOT_DIR, env: { ...process.env, ...(options.env || {}) }, stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit", encoding: "utf8", shell: false });
+  const result = spawnSync(command, args, { cwd: options.cwd || ROOT_DIR, env: { ...process.env, ...WORKER_ENV, ...(options.env || {}) }, stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit", encoding: "utf8", shell: false });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(command + " failed with exit code " + result.status + (result.stderr ? "\n" + result.stderr : ""));
   return result.stdout || "";
