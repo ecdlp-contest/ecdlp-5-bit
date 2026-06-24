@@ -1,0 +1,82 @@
+flowchart TD
+  Target["Target oracle: aG + bQ"]
+  Algorithm["Algorithm"]
+  Optimization["Optimization"]
+
+  Target --> Algorithm
+  Target --> Optimization
+
+  Algorithm --> ABI["Preserve input registers: a, b, Q"]
+  Algorithm --> Output["Write output register: R = aG + bQ"]
+  Algorithm --> Curve["Toy secp256k1-style curve over F31"]
+  Algorithm --> Encoding["Affine point encoding: x, y, infinity flag"]
+
+  Algorithm --> Baseline["Baseline table-driven decomposition"]
+  Baseline --> AG["Compute scratch A = aG"]
+  Baseline --> BQ["Compute scratch B = bQ"]
+  Baseline --> Add["Compute output R = A + B"]
+  Baseline --> UncomputeB["Uncompute scratch B"]
+  Baseline --> UncomputeA["Uncompute scratch A"]
+
+  AG --> AGTable["Direct a-to-aG lookup table"]
+  BQ --> BQTable["Direct b,Q-to-bQ lookup table"]
+  Add --> AddTable["Direct A,B-to-R point-addition lookup table"]
+  UncomputeB --> Cleanup["Restore scratch and ancilla to zero"]
+  UncomputeA --> Cleanup
+
+  AGTable --> MatchFlags["Exact-match flags built with X and CCX chains"]
+  BQTable --> MatchFlags
+  AddTable --> MatchFlags
+  MatchFlags --> PointXor["Conditionally XOR selected point bits into target registers"]
+
+  Curve --> PointDoubling["Point doubling appears inside scalar multiplication tables"]
+  PointDoubling --> AGTable
+  PointDoubling --> BQTable
+
+  ABI --> Validation["Trusted validation: oracle correctness, input preservation, phase cleanliness, ancilla cleanup"]
+  Cleanup --> Validation
+  Output --> Validation
+
+  Algorithm --> Knobs["Structural knobs exposed to optimization"]
+  AGTable --> K1["Knob: replace full aG lookup with scalar schedule or windowing"]
+  BQTable --> K2["Knob: replace b,Q lookup with smaller variable-Q strategy"]
+  AddTable --> K3["Knob: replace point-addition lookup with arithmetic formula"]
+  MatchFlags --> K4["Knob: reduce exact-match flag CCX chains"]
+  Cleanup --> K5["Knob: reschedule uncompute and ancilla reuse"]
+  Encoding --> K6["Knob: adjust point and infinity representation"]
+
+  K1 --> Optimization
+  K2 --> Optimization
+  K3 --> Optimization
+  K4 --> Optimization
+  K5 --> Optimization
+  K6 --> Optimization
+
+  Optimization --> Islands["Candidate optimization islands"]
+  Islands --> I1["Island: smaller lookup tables"]
+  Islands --> I2["Island: fewer conditional additions"]
+  Islands --> I3["Island: lower peak qubits"]
+  Islands --> I4["Island: cheaper uncompute"]
+  Islands --> I5["Island: arithmetic instead of tables"]
+
+  Optimization --> Methods["Search and comparison methods"]
+  Methods --> M1["Manual algebraic simplification"]
+  Methods --> M2["Local rewrite trials"]
+  Methods --> M3["Benchmark-guided comparison"]
+
+  I1 --> Eval["Evaluate candidates"]
+  I2 --> Eval
+  I3 --> Eval
+  I4 --> Eval
+  I5 --> Eval
+  M1 --> Eval
+  M2 --> Eval
+  M3 --> Eval
+
+  Eval --> Score["Score: rounded Toffoli count times logical qubits"]
+  Score --> Choice["Chosen implementation"]
+  Choice --> Artifact["Generated artifacts: ops.bin and score.json"]
+  Choice --> AG
+  Choice --> BQ
+  Choice --> Add
+  Choice --> Cleanup
