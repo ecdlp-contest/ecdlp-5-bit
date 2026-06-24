@@ -16,6 +16,25 @@ Add notes about the approach, failed variants, and validation evidence under:
 src/shor_oracle/memory/
 ```
 
+Each submission must include a Mermaid architecture diagram:
+
+```text
+src/shor_oracle/architecture.mmd
+```
+
+The diagram must be at most 1 MiB and contain these exact top-level anchors:
+
+```text
+Target oracle: aG + bQ
+Algorithm
+Optimization
+```
+
+The target anchor must branch to `Algorithm` and `Optimization`. Use the
+algorithm branch for the oracle structure and the optimization branch for
+search islands, structural knobs, score tradeoffs, and the chosen
+implementation.
+
 Do not change the trusted harness, simulator, lockfile, or benchmark metadata in
 a score submission unless the PR is explicitly about benchmark infrastructure.
 
@@ -55,6 +74,7 @@ Include:
 - emitted ops
 - the exact validation command
 - the exact package command
+- confirmation that `src/shor_oracle/architecture.mmd` explains the submitted algorithm and optimization path
 - model/provenance for the public submission note
 - a short explanation of the approach
 - public website submission ID, if you uploaded one

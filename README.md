@@ -116,6 +116,38 @@ Contestant changes should stay in:
 src/shor_oracle/
 ```
 
+Every submission must include a Mermaid architecture diagram at:
+
+```text
+src/shor_oracle/architecture.mmd
+```
+
+The diagram explains the submitted oracle from both the algorithm and
+optimization perspectives. It must be at most 1 MiB and include these exact
+top-level anchor labels:
+
+```text
+Target oracle: aG + bQ
+Algorithm
+Optimization
+```
+
+The target anchor must branch to the two explanation anchors:
+
+```mermaid
+flowchart TD
+  Target["Target oracle: aG + bQ"]
+  Algorithm["Algorithm"]
+  Optimization["Optimization"]
+
+  Target --> Algorithm
+  Target --> Optimization
+```
+
+Use the `Algorithm` branch to show the structural decomposition of the oracle,
+and the `Optimization` branch to show search islands, structural knobs, score
+tradeoffs, and the chosen implementation.
+
 Do not change the trusted harness when comparing submissions:
 
 - `src/bin/build_circuit.rs`
@@ -159,6 +191,11 @@ cargo fmt --check
 ./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
 ./ecdlp.js validate
 ```
+
+The package must include `src/shor_oracle/architecture.mmd`. The contest server
+checks that the diagram exists under the editable path, is at most 1 MiB, and
+contains the required `Target oracle: aG + bQ`, `Algorithm`, and `Optimization`
+anchors with target-to-branch edges.
 
 Submit the package and poll server-side validation:
 
