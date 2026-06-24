@@ -19,6 +19,11 @@ cargo fmt --check
 ./ecdlp.js validate
 ```
 
+Confirm the source tree includes `src/shor_oracle/architecture.mmd`. The diagram
+must be at most 1 MiB and contain the required top-level anchors
+`Target oracle: aG + bQ`, `Algorithm`, and `Optimization`, with the target
+anchor branching to both explanation anchors.
+
 Confirm `score.json` contains:
 
 ```text
