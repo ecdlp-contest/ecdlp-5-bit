@@ -24,7 +24,16 @@ function run(command, args, options = {}) {
 async function requestJson(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { "content-type": "application/json", "x-ecdlp-worker-token": WORKER_TOKEN, ...(options.headers || {}) } });
   const text = await response.text();
-  const body = text ? JSON.parse(text) : {};
+  let body = {};
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      const firstLine = text.split(/\r?\n/).find(Boolean) || text;
+      const contentType = response.headers.get("content-type") || "unknown";
+      throw new Error("expected JSON from " + url + " but got HTTP " + response.status + " " + contentType + ": " + firstLine.slice(0, 160));
+    }
+  }
   if (!response.ok) throw new Error(body.error || "HTTP " + response.status);
   return body;
 }
