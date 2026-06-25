@@ -12,9 +12,12 @@ const { spawnSync } = require("child_process");
 const DEFAULT_API = "https://www.secp256k1.org";
 const MAX_NOTE_BYTES = 10 * 1024;
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
+const MAX_ARCHITECTURE_BYTES = 1024 * 1024;
 const REQUIRED_SHOTS = 9024;
 const SCORE_MODEL = "primitive-ccx-ccz-v1";
 const REQUIRED_ARTIFACT = "ops.bin";
+const REQUIRED_ARCHITECTURE_LABELS = ["Target oracle: aG + bQ", "Algorithm", "Optimization"];
+const REQUIRED_ARCHITECTURE_PATH = "src/shor_oracle/architecture.mmd";
 
 const TRACKS = {
   "point-double-secp256k1-v1": {
@@ -27,13 +30,15 @@ const TRACKS = {
     gate: "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle",
     editablePaths: ["src/shor_oracle"],
     requiredChecks: ["oracle correctness", "input preservation", "phase cleanliness", "ancilla cleanup"],
-    defaultNoteFile: "src/shor_oracle/memory/README.md"
+    defaultNoteFile: "src/shor_oracle/memory/README.md",
+    architectureDiagram: REQUIRED_ARCHITECTURE_PATH
   },
   "shor-ecdlp-7bit-v1": {
     gate: "fiat_shamir_shor_ecdlp_7bit_variable_q_oracle",
     editablePaths: ["src/shor_oracle"],
     requiredChecks: ["oracle correctness", "input preservation", "phase cleanliness", "ancilla cleanup"],
-    defaultNoteFile: "src/shor_oracle/memory/README.md"
+    defaultNoteFile: "src/shor_oracle/memory/README.md",
+    architectureDiagram: REQUIRED_ARCHITECTURE_PATH
   }
 };
 
@@ -198,6 +203,119 @@ function sha256File(filePath) {
   return hash.digest("hex");
 }
 
+function listArchiveEntries(archivePath) {
+  const result = spawnSync("tar", ["-tzf", archivePath], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`tar -tzf failed with exit code ${result.status}`);
+  return result.stdout
+    .split(/\r?\n/)
+    .map((entry) => normalizeRepoPath(entry))
+    .filter(Boolean);
+}
+
+function stripMermaidComments(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/%%.*$/u, "").trim())
+    .filter(Boolean);
+}
+
+function parseMermaidNodeToken(token, idsByLabel) {
+  const match = token.trim().match(/^([A-Za-z][\w-]*)(.*)$/u);
+  if (!match) return null;
+  const id = match[1];
+  const rest = match[2] || "";
+  const quoted = rest.match(/^[\s]*(?:\[|\(|\{)\s*"([^"]+)"\s*(?:\]|\)|\})/u);
+  const bare = rest.match(/^[\s]*(?:\[|\(|\{)\s*([^\]\)\}]+?)\s*(?:\]|\)|\})/u);
+  const label = (quoted?.[1] || bare?.[1] || "").trim();
+  if (label) {
+    if (!idsByLabel.has(label)) idsByLabel.set(label, new Set());
+    idsByLabel.get(label).add(id);
+  }
+  return id;
+}
+
+function inspectMermaidArchitecture(text) {
+  const lines = stripMermaidComments(text);
+  const errors = [];
+  if (!/^(flowchart|graph)\s+(TD|TB|BT|LR|RL)\b/u.test(lines[0] || "")) {
+    errors.push("diagram must start with a Mermaid flowchart or graph declaration");
+  }
+
+  const idsByLabel = new Map();
+  const edges = [];
+  for (const line of lines.slice(1)) {
+    const compactArrow = line.match(/^(.*?)\s*(?:-->|---?>|==>)\s*(.*)$/u);
+    if (compactArrow) {
+      const from = parseMermaidNodeToken(compactArrow[1], idsByLabel);
+      const to = parseMermaidNodeToken(compactArrow[2], idsByLabel);
+      if (from && to) edges.push([from, to]);
+      continue;
+    }
+    parseMermaidNodeToken(line, idsByLabel);
+  }
+
+  for (const label of REQUIRED_ARCHITECTURE_LABELS) {
+    if (!idsByLabel.has(label)) errors.push(`diagram must contain exact anchor label '${label}'`);
+  }
+
+  const targetIds = idsByLabel.get("Target oracle: aG + bQ") || new Set();
+  const algorithmIds = idsByLabel.get("Algorithm") || new Set();
+  const optimizationIds = idsByLabel.get("Optimization") || new Set();
+  const hasEdge = (fromIds, toIds) => edges.some(([from, to]) => fromIds.has(from) && toIds.has(to));
+  if (targetIds.size && algorithmIds.size && !hasEdge(targetIds, algorithmIds)) {
+    errors.push("Target oracle: aG + bQ must have an outgoing edge to Algorithm");
+  }
+  if (targetIds.size && optimizationIds.size && !hasEdge(targetIds, optimizationIds)) {
+    errors.push("Target oracle: aG + bQ must have an outgoing edge to Optimization");
+  }
+  return errors;
+}
+
+function architectureDiagramErrors(spec, metadataPath = null, metadata = null) {
+  const diagramPath = spec?.architectureDiagram;
+  if (!diagramPath) return [];
+  const errors = [];
+  const absolutePath = path.resolve(diagramPath);
+  if (!fs.existsSync(absolutePath)) {
+    errors.push(`${diagramPath} is required`);
+    return errors;
+  }
+  const stat = fs.statSync(absolutePath);
+  if (!stat.isFile()) errors.push(`${diagramPath} must be a file`);
+  if (stat.size <= 0 || stat.size > MAX_ARCHITECTURE_BYTES) {
+    errors.push(`${diagramPath} must be between 1 and ${MAX_ARCHITECTURE_BYTES} bytes`);
+  }
+  const text = fs.readFileSync(absolutePath, "utf8");
+  if (text.includes("\uFFFD")) errors.push(`${diagramPath} must be valid UTF-8 text`);
+  errors.push(...inspectMermaidArchitecture(text).map((message) => `${diagramPath}: ${message}`));
+
+  if (metadataPath && metadata?.archive) {
+    const archivePath = path.resolve(path.dirname(path.resolve(metadataPath)), metadata.archive);
+    if (fs.existsSync(archivePath)) {
+      try {
+        const entries = listArchiveEntries(archivePath);
+        if (!entries.includes(normalizeRepoPath(diagramPath))) {
+          errors.push(`${metadata.archive} must include ${diagramPath}`);
+        }
+      } catch (error) {
+        errors.push(`could not inspect ${metadata.archive}: ${error.message}`);
+      }
+    }
+  }
+  return errors;
+}
+
+function assertArchitectureDiagram(spec) {
+  const errors = architectureDiagramErrors(spec);
+  if (errors.length > 0) throw new Error(errors[0]);
+}
+
 function utf8Bytes(text) {
   return Buffer.byteLength(text, "utf8");
 }
@@ -221,6 +339,10 @@ function packageSubmission(args) {
   for (const editablePath of editablePaths) {
     if (!fs.existsSync(path.resolve(editablePath))) throw new Error(`editable path does not exist: ${editablePath}`);
   }
+  assertArchitectureDiagram(spec);
+  const architecturePath = spec.architectureDiagram;
+  const architectureBytes = fs.statSync(path.resolve(architecturePath)).size;
+  const architectureSha256 = sha256File(path.resolve(architecturePath));
 
   const model = getFlag(args, "--model", "");
   if (!model.trim()) throw new Error("--model is required");
@@ -282,6 +404,11 @@ function packageSubmission(args) {
     artifact: score.artifact,
     artifactBytes,
     artifactSha256,
+    architectureDiagram: architecturePath ? {
+      path: architecturePath,
+      bytes: architectureBytes,
+      sha256: architectureSha256
+    } : undefined,
     generatedAt: new Date().toISOString()
   };
   fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
@@ -356,6 +483,10 @@ function validatePackage(metadata, options = {}) {
     const digest = sha256File(path.resolve(metadata.artifact));
     if (metadata.artifactBytes !== stat.size) error("PACKAGE_ARTIFACT_BYTES", `artifactBytes does not match local ${metadata.artifact}`);
     if (metadata.artifactSha256 && metadata.artifactSha256.toLowerCase() !== digest) error("PACKAGE_ARTIFACT_SHA256", `artifactSha256 does not match local ${metadata.artifact}`);
+  }
+
+  for (const message of architectureDiagramErrors(spec, options.metadataPath || null, metadata)) {
+    error("PACKAGE_ARCHITECTURE_DIAGRAM", message);
   }
 
   if (!logs.some((entry) => entry.level === "error")) {
@@ -520,7 +651,7 @@ async function pollSubmissionStatus(id, args = []) {
 async function submit(filePath, args) {
   filePath = filePath || defaultSubmissionPath();
   const metadata = readJson(filePath);
-  const result = validatePackage(metadata, { trackId: getFlag(args, "--track", metadata.benchmark) });
+  const result = validatePackage(metadata, { trackId: getFlag(args, "--track", metadata.benchmark), metadataPath: filePath });
   printValidation(result);
   if (!result.ok) process.exit(1);
   const note = readNoteOption(args, filePath, metadata);
@@ -588,7 +719,7 @@ async function main() {
   if (command === "package") return packageSubmission(args);
   if (command === "validate") {
     const filePath = firstPositional(args) || defaultSubmissionPath();
-    const result = validatePackage(readJson(filePath), { trackId: getFlag(args, "--track", null) });
+    const result = validatePackage(readJson(filePath), { trackId: getFlag(args, "--track", null), metadataPath: filePath });
     printValidation(result);
     process.exit(result.ok ? 0 : 1);
   }

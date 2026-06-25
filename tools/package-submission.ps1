@@ -14,11 +14,13 @@ $ErrorActionPreference = "Stop"
 
 $MaxSubmissionNoteBytes = 10 * 1024
 $MaxSubmissionArchiveBytes = 25 * 1024 * 1024
+$MaxArchitectureBytes = 1024 * 1024
 $RequiredShots = 9024
 $RequiredGate = "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle"
 $RequiredBenchmark = "shor-ecdlp-5bit-v1"
 $RequiredScoreModel = "primitive-ccx-ccz-v1"
 $RequiredArtifact = "ops.bin"
+$RequiredArchitecturePath = "src/shor_oracle/architecture.mmd"
 
 function Resolve-RepoPath([string] $RepoRoot, [string] $RepoPath) {
   $relative = $RepoPath -replace "/", [System.IO.Path]::DirectorySeparatorChar
@@ -41,6 +43,71 @@ function Assert-RepoRelativePath([string] $RepoPath, [string] $FieldName) {
     throw "$FieldName must not be benchmark.json"
   }
   return $normalized
+}
+
+function Assert-ArchitectureDiagram([string] $RepoRoot) {
+  $diagramPath = Resolve-RepoPath $RepoRoot $RequiredArchitecturePath
+  if (-not (Test-Path -LiteralPath $diagramPath -PathType Leaf)) {
+    throw "$RequiredArchitecturePath is required"
+  }
+  $diagramBytes = (Get-Item -LiteralPath $diagramPath).Length
+  if ($diagramBytes -le 0 -or $diagramBytes -gt $MaxArchitectureBytes) {
+    throw "$RequiredArchitecturePath must be between 1 and $MaxArchitectureBytes bytes"
+  }
+  $text = [System.IO.File]::ReadAllText($diagramPath, $Utf8NoBom)
+  $lines = $text -split "\r?\n" |
+    ForEach-Object { ($_ -replace "%%.*$", "").Trim() } |
+    Where-Object { $_.Length -gt 0 }
+  if ($lines.Count -eq 0 -or $lines[0] -notmatch "^(flowchart|graph)\s+(TD|TB|BT|LR|RL)\b") {
+    throw "$RequiredArchitecturePath must start with a Mermaid flowchart or graph declaration"
+  }
+
+  $idsByLabel = @{}
+  foreach ($line in $lines) {
+    foreach ($label in @("Target oracle: aG + bQ", "Algorithm", "Optimization")) {
+      $pattern = "([A-Za-z][\w-]*)\s*(?:\[|\(|\{)\s*`"$([regex]::Escape($label))`"\s*(?:\]|\)|\})"
+      foreach ($match in [regex]::Matches($line, $pattern)) {
+        if (-not $idsByLabel.ContainsKey($label)) {
+          $idsByLabel[$label] = @()
+        }
+        $idsByLabel[$label] += $match.Groups[1].Value
+      }
+    }
+  }
+
+  foreach ($label in @("Target oracle: aG + bQ", "Algorithm", "Optimization")) {
+    if (-not $idsByLabel.ContainsKey($label) -or $idsByLabel[$label].Count -eq 0) {
+      throw "$RequiredArchitecturePath must contain exact anchor label '$label'"
+    }
+  }
+
+  $targetIds = $idsByLabel["Target oracle: aG + bQ"]
+  $algorithmIds = $idsByLabel["Algorithm"]
+  $optimizationIds = $idsByLabel["Optimization"]
+  $hasAlgorithmEdge = $false
+  $hasOptimizationEdge = $false
+  foreach ($line in $lines) {
+    foreach ($targetId in $targetIds) {
+      foreach ($algorithmId in $algorithmIds) {
+        $pattern = "^\s*$([regex]::Escape($targetId))(?:\[[^\]]+\]|\([^\)]+\)|\{[^\}]+\})?\s*(?:-->|---?>|==>)\s*$([regex]::Escape($algorithmId))\b"
+        if ($line -match $pattern) {
+          $hasAlgorithmEdge = $true
+        }
+      }
+      foreach ($optimizationId in $optimizationIds) {
+        $pattern = "^\s*$([regex]::Escape($targetId))(?:\[[^\]]+\]|\([^\)]+\)|\{[^\}]+\})?\s*(?:-->|---?>|==>)\s*$([regex]::Escape($optimizationId))\b"
+        if ($line -match $pattern) {
+          $hasOptimizationEdge = $true
+        }
+      }
+    }
+  }
+  if (-not $hasAlgorithmEdge) {
+    throw "$RequiredArchitecturePath must have Target branching to Algorithm"
+  }
+  if (-not $hasOptimizationEdge) {
+    throw "$RequiredArchitecturePath must have Target branching to Optimization"
+  }
 }
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -92,6 +159,10 @@ try {
       throw "editablePaths must not overlap: $($sorted[$i]) and $($sorted[$i + 1])"
     }
   }
+  Assert-ArchitectureDiagram $RepoRoot
+  $architecturePath = Resolve-RepoPath $RepoRoot $RequiredArchitecturePath
+  $architectureBytes = (Get-Item -LiteralPath $architecturePath).Length
+  $architectureSha256 = (Get-FileHash -LiteralPath $architecturePath -Algorithm SHA256).Hash.ToLowerInvariant()
 
   $notePath = Resolve-RepoPath $RepoRoot $NoteFile
   if (-not (Test-Path -LiteralPath $notePath)) {
@@ -181,6 +252,11 @@ try {
     artifact = $score.artifact
     artifactBytes = $artifactBytes
     artifactSha256 = $artifactSha256
+    architectureDiagram = [ordered]@{
+      path = $RequiredArchitecturePath
+      bytes = $architectureBytes
+      sha256 = $architectureSha256
+    }
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
   }
   [System.IO.File]::WriteAllText(
