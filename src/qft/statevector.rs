@@ -2,4 +2,4 @@
 //!
 //! The scored oracle validator does not use this module.
 
-pub const SCALAR_REGISTER_DIM: usize = 31;
+pub const SCALAR_REGISTER_DIM: usize = 21;

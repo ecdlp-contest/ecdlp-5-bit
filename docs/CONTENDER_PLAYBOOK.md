@@ -39,7 +39,7 @@ islands, structural knobs, score tradeoffs, and the chosen implementation.
 
 - Replace the table baseline with arithmetic for scalar multiplication by `G`
   and by the input point `Q`.
-- Use the special modulus `31 = 2^5 - 1` to fold carries cheaply.
+- Use the special field modulus `31 = 2^5 - 1` to fold carries cheaply.
 - Trade a small amount of scratch for fewer repeated equality checks.
 - Preserve the input register `b`; the trusted evaluator rejects mutations.
 

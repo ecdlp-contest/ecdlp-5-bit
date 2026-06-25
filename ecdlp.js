@@ -26,7 +26,7 @@ const TRACKS = {
     requiredChecks: ["classical correctness", "input preservation", "phase cleanliness", "ancilla cleanup"],
     defaultNoteFile: "src/point_double/memory/README.md"
   },
-  "shor-ecdlp-5bit-v1": {
+  "shor-ecdlp-5bit": {
     gate: "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle",
     editablePaths: ["src/shor_oracle"],
     requiredChecks: ["oracle correctness", "input preservation", "phase cleanliness", "ancilla cleanup"],

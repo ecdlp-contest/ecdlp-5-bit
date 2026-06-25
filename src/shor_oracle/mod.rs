@@ -13,9 +13,11 @@
 //!
 //! The oracle computes:
 //!
-//!     |a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>
+//! ```text
+//! |a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>
+//! ```
 //!
-//! for any valid group point `Q` on `y^2 = x^3 + 11x + 7 mod 31`. The trusted
+//! for any valid group point `Q` on `y^2 = x^3 + 7 mod 31`. The trusted
 //! evaluator chooses `Q = kG` after the circuit is built.
 //!
 //! This baseline is table-driven:
@@ -31,8 +33,8 @@
 use crate::circuit::{Op, OperationType, QubitId, RegisterId};
 
 pub const FIELD_MODULUS: u16 = 31;
-pub const CURVE_A: u16 = 11;
-pub const GROUP_ORDER: u16 = 31;
+pub const CURVE_A: u16 = 0;
+pub const GROUP_ORDER: u16 = 21;
 pub const WIDTH: usize = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,8 +45,8 @@ struct Point {
 }
 
 const G: Point = Point {
-    x: 0,
-    y: 10,
+    x: 1,
+    y: 15,
     infinity: false,
 };
 

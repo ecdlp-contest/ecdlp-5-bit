@@ -1,4 +1,4 @@
-track_id = "shor-ecdlp-5bit-v1"
+track_id = "shor-ecdlp-5bit"
 schema_version = "ecdlp-primitive-ops-v1"
 editable_path = "src/shor_oracle/"
 trusted_stage = "src/bin/eval_circuit.rs"

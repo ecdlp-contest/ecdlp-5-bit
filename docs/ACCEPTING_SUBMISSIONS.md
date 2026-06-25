@@ -1,7 +1,7 @@
 # Accepting Submissions
 
 Maintainers should accept only source changes that preserve the public
-`shor-ecdlp-5bit-v1` contract and improve the trusted score.
+`shor-ecdlp-5bit` contract and improve the trusted score.
 
 Only Track 1 is active for public submissions. Accept changes under
 `src/shor_oracle/`; `src/qft/` and `src/full_shor/` remain reserved and
@@ -45,7 +45,7 @@ ancilla-garbage batches : 0
 Package metadata must include:
 
 ```text
-benchmark: shor-ecdlp-5bit-v1
+benchmark: shor-ecdlp-5bit
 editablePaths: ["src/shor_oracle"]
 artifactBytes: <ops.bin byte size>
 artifactSha256: <ops.bin sha256>

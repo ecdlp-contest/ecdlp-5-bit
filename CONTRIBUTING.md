@@ -1,6 +1,6 @@
 # Contributing
 
-This repository is the public `shor-ecdlp-5bit-v1` benchmark workspace.
+This repository is the public `shor-ecdlp-5bit` benchmark workspace.
 
 ## What To Edit
 

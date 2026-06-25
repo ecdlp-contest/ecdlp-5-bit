@@ -30,8 +30,8 @@ const RESULTS_HEADER: &str =
 const SCORE_MODEL: &str = "primitive-ccx-ccz-v1";
 const VALIDATION_GATE: &str = "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle";
 const FIELD_MODULUS: u16 = 31;
-const CURVE_A: u16 = 11;
-const GROUP_ORDER: u16 = 31;
+const CURVE_A: u16 = 0;
+const GROUP_ORDER: u16 = 21;
 const WIDTH: usize = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,8 +42,8 @@ struct Point {
 }
 
 const G: Point = Point {
-    x: 0,
-    y: 10,
+    x: 1,
+    y: 15,
     infinity: false,
 };
 
@@ -524,7 +524,7 @@ fn main() {
     assert_public_instance();
     let note = parse_note();
     println!("=== ecdlp_5_bit: eval_circuit (trusted stage) ===\n");
-    println!("  curve      : y^2 = x^3 + 11x + 7 mod 31");
+    println!("  curve      : y^2 = x^3 + 7 mod 31");
     println!("  generator  : G=({}, {})", G.x, G.y);
     println!("  Q input    : any valid point Q=kG");
     println!("  oracle     : |a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>");

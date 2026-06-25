@@ -13,17 +13,17 @@ This repository follows the ECDSA Fail baseline convention:
 
 ## Contract
 
-Track: `shor-ecdlp-5bit-v1`
+Track: `shor-ecdlp-5bit`
 
 Score model: `primitive-ccx-ccz-v1`
 
 Curve:
 
 ```text
-E: y^2 = x^3 + 11x + 7 mod 31
-|E(F_31)| = 31
-G = (0, 10)
-example Q = 37G = 6G = (28, 3)
+E: y^2 = x^3 + 7 mod 31
+|E(F_31)| = 21
+G = (1, 15)
+example Q = 37G = 16G = (25, 15)
 ```
 
 Circuit ABI:
@@ -45,8 +45,8 @@ The oracle must compute:
 |a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>
 ```
 
-Raw 5-bit scalar inputs are interpreted modulo the group order `31`, so the bit
-pattern `31` is treated as scalar `0`. The trusted evaluator supplies valid
+Raw 5-bit scalar inputs are interpreted modulo the group order `21`, so the bit
+pattern `21` is treated as scalar `0`. The trusted evaluator supplies valid
 group points `Q = kG` after the circuit is built.
 
 ## Baseline
@@ -63,20 +63,20 @@ Current expected static shape:
 input/output qubits: 32
 lookup scratch: 43
 logical qubits: 75
-static CCX: 100,394
+static CCX: 59,354
 ```
 
 Current full trusted eval:
 
 ```text
 9024 shots OK
-toffoli: 100,394
-ccx: 100,394
+toffoli: 59,354
+ccx: 59,354
 ccz: 0
-clifford: 13,146
+clifford: 7,755
 qubits: 75
-ops: 174,472
-score: 7,529,550
+ops: 103,445
+score: 4,451,550
 ```
 
 ## How To Run
@@ -170,7 +170,7 @@ Only `src/shor_oracle/` is part of the current submission boundary.
 ## Official Submission Flow
 
 This repository is the public contest baseline and submission surface for
-`shor-ecdlp-5bit-v1`. You may keep your fork or branch private while testing,
+`shor-ecdlp-5bit`. You may keep your fork or branch private while testing,
 but the package submitted to the contest server must be built from this public
 baseline contract.
 
@@ -214,7 +214,7 @@ If you already have a submission id, poll it directly:
 The built-in package helper enforces the official boundary before the server
 sees the package:
 
-- benchmark `shor-ecdlp-5bit-v1`
+- benchmark `shor-ecdlp-5bit`
 - validation gate `fiat_shamir_shor_ecdlp_5bit_variable_q_oracle`
 - editable path exactly `src/shor_oracle`
 - `ops.bin` byte/hash commitments
