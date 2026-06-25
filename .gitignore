@@ -3,6 +3,7 @@
 debug
 target
 .workspace
+states
 dist
 ops.bin
 score.json

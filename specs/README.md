@@ -4,6 +4,7 @@
 
 - contestants may edit only manifest `editablePaths`;
 - submission packages require a public note and model attribution;
+- Shor packages require a committed Mermaid architecture diagram in the archive;
 - accepted submissions must pass the trusted 9024-shot Fiat-Shamir oracle validator and improve the lower-is-better frontier;
 - sync/reset restores only editable paths from promoted submissions while harness files follow the default branch.
 

@@ -203,6 +203,10 @@ function sha256File(filePath) {
 }
 
 function listArchiveEntries(archivePath) {
+  return listArchiveEntriesDetailed(archivePath).map((entry) => entry.normalized);
+}
+
+function listArchiveEntriesDetailed(archivePath) {
   const result = spawnSync("tar", ["-tzf", archivePath], {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -213,8 +217,53 @@ function listArchiveEntries(archivePath) {
   if (result.status !== 0) throw new Error(`tar -tzf failed with exit code ${result.status}`);
   return result.stdout
     .split(/\r?\n/)
-    .map((entry) => normalizeRepoPath(entry))
-    .filter(Boolean);
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((raw) => ({ raw, normalized: normalizeRepoPath(raw) }));
+}
+
+function isArchiveEntryInEditableScope(entry, editablePaths) {
+  return editablePaths.some((editablePath) => (
+    entry === editablePath ||
+    entry.startsWith(`${editablePath}/`) ||
+    editablePath.startsWith(`${entry}/`)
+  ));
+}
+
+function archivePackageErrors(spec, metadataPath, metadata) {
+  if (!metadataPath || !metadata?.archive) return [];
+  const errors = [];
+  const archivePath = path.resolve(path.dirname(path.resolve(metadataPath)), metadata.archive);
+  if (!fs.existsSync(archivePath)) {
+    errors.push(`${metadata.archive} is missing beside ${path.basename(metadataPath)}`);
+    return errors;
+  }
+
+  const stat = fs.statSync(archivePath);
+  if (Number.isInteger(metadata.archiveBytes) && metadata.archiveBytes !== stat.size) {
+    errors.push(`archiveBytes does not match local ${metadata.archive}`);
+  }
+
+  let entries;
+  try {
+    entries = listArchiveEntriesDetailed(archivePath);
+  } catch (error) {
+    errors.push(`could not inspect ${metadata.archive}: ${error.message}`);
+    return errors;
+  }
+  if (entries.length === 0) errors.push(`${metadata.archive} must not be empty`);
+
+  const editablePaths = (spec?.editablePaths || []).map(normalizeRepoPath);
+  for (const entry of entries) {
+    if (entry.raw.startsWith("/") || entry.normalized.split("/").includes("..")) {
+      errors.push(`${metadata.archive} contains unsafe entry: ${entry.raw}`);
+      continue;
+    }
+    if (!isArchiveEntryInEditableScope(entry.normalized, editablePaths)) {
+      errors.push(`${metadata.archive} contains entry outside editable paths: ${entry.normalized}`);
+    }
+  }
+  return errors;
 }
 
 function stripMermaidComments(text) {
@@ -293,6 +342,26 @@ function architectureDiagramErrors(spec, metadataPath = null, metadata = null) {
   const text = fs.readFileSync(absolutePath, "utf8");
   if (text.includes("\uFFFD")) errors.push(`${diagramPath} must be valid UTF-8 text`);
   errors.push(...inspectMermaidArchitecture(text).map((message) => `${diagramPath}: ${message}`));
+
+  if (metadata && (!metadata.architectureDiagram || typeof metadata.architectureDiagram !== "object" || Array.isArray(metadata.architectureDiagram))) {
+    errors.push("metadata.architectureDiagram is required");
+  } else if (metadata) {
+    const commitment = metadata.architectureDiagram;
+    const digest = sha256File(absolutePath);
+    if (commitment.path !== diagramPath) {
+      errors.push(`metadata.architectureDiagram.path must be ${diagramPath}`);
+    }
+    if (!Number.isInteger(commitment.bytes) || commitment.bytes <= 0 || commitment.bytes > MAX_ARCHITECTURE_BYTES) {
+      errors.push(`metadata.architectureDiagram.bytes must be between 1 and ${MAX_ARCHITECTURE_BYTES}`);
+    } else if (commitment.bytes !== stat.size) {
+      errors.push(`metadata.architectureDiagram.bytes does not match local ${diagramPath}`);
+    }
+    if (typeof commitment.sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(commitment.sha256)) {
+      errors.push("metadata.architectureDiagram.sha256 must be a 64-character SHA-256 hex digest");
+    } else if (commitment.sha256.toLowerCase() !== digest) {
+      errors.push(`metadata.architectureDiagram.sha256 does not match local ${diagramPath}`);
+    }
+  }
 
   if (metadataPath && metadata?.archive) {
     const archivePath = path.resolve(path.dirname(path.resolve(metadataPath)), metadata.archive);
@@ -486,6 +555,9 @@ function validatePackage(metadata, options = {}) {
 
   for (const message of architectureDiagramErrors(spec, options.metadataPath || null, metadata)) {
     error("PACKAGE_ARCHITECTURE_DIAGRAM", message);
+  }
+  for (const message of archivePackageErrors(spec, options.metadataPath || null, metadata)) {
+    error("PACKAGE_ARCHIVE", message);
   }
 
   if (!logs.some((entry) => entry.level === "error")) {

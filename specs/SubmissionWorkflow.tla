@@ -7,7 +7,7 @@ benchmark repository.
 
 The model follows the ECDSA Fail organization:
   - contestant submissions package only manifest editablePaths;
-  - notes and model attribution are required;
+  - notes, model attribution, and architecture-diagram commitments are required;
   - the trusted evaluator must rank the artifact after RequiredShots;
   - an accepted submission must improve the lower-is-better frontier;
   - sync/reset only restore editable paths from promoted submissions while the
@@ -23,6 +23,7 @@ CONSTANTS
     MaxScore,
     MaxSubmissionNoteBytes,
     MaxSubmissionArchiveBytes,
+    MaxArchitectureDiagramBytes,
     RequiredShots
 
 ASSUME Submitters # {}
@@ -33,6 +34,7 @@ ASSUME HarnessStates # {}
 ASSUME MaxScore \in Nat \ {0}
 ASSUME MaxSubmissionNoteBytes \in Nat \ {0}
 ASSUME MaxSubmissionArchiveBytes \in Nat \ {0}
+ASSUME MaxArchitectureDiagramBytes \in Nat \ {0}
 ASSUME RequiredShots \in Nat \ {0}
 
 Statuses == {"queued", "accepted", "rejected"}
@@ -46,6 +48,10 @@ Submission ==
       shots : 0..RequiredShots,
       noteBytes : 0..MaxSubmissionNoteBytes,
       archiveBytes : 0..MaxSubmissionArchiveBytes,
+      architectureBytes : 0..MaxArchitectureDiagramBytes,
+      architectureCommitted : BOOLEAN,
+      architectureInArchive : BOOLEAN,
+      archiveScopedToEditable : BOOLEAN,
       model : Models,
       status : Statuses ]
 
@@ -74,6 +80,10 @@ SubmittedIds == {id \in SubmissionIds : submissions[id] # EmptySubmission}
 ValidPackage(rec) ==
     /\ rec.noteBytes \in 1..MaxSubmissionNoteBytes
     /\ rec.archiveBytes \in 1..MaxSubmissionArchiveBytes
+    /\ rec.architectureBytes \in 1..MaxArchitectureDiagramBytes
+    /\ rec.architectureCommitted
+    /\ rec.architectureInArchive
+    /\ rec.archiveScopedToEditable
     /\ rec.model \in Models
 
 TrustedRanked(rec) ==
