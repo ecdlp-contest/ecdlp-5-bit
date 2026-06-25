@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const ROOT_DIR = path.resolve(new URL("..", import.meta.url).pathname);
 const API_URL = (process.env.ECDLP_API_URL || "").replace(/\/$/, "");
@@ -39,6 +40,34 @@ async function requestJson(url, options = {}) {
 }
 function sha256(buffer) { return crypto.createHash("sha256").update(buffer).digest("hex"); }
 function assertEqual(label, actual, expected) { if (expected !== null && expected !== undefined && expected !== "" && actual !== expected) throw new Error(label + " mismatch: reproduced=" + actual + " submitted=" + expected); }
+function normalizeArchiveEntry(entry) { return entry.replace(/\\/g, "/").replace(/^\.\/+/g, "").replace(/\/+$/g, ""); }
+function pathSegments(filePath) { return normalizeArchiveEntry(filePath).split("/").filter(Boolean); }
+function isSystemMetadataPath(filePath) {
+  return pathSegments(filePath).some((segment) => segment === "__MACOSX" || segment === ".DS_Store" || segment === ".AppleDouble" || segment.startsWith("._"));
+}
+function isEntryInEditableScope(entry, editablePaths) {
+  return editablePaths.some((editablePath) => entry === editablePath || entry.startsWith(editablePath + "/") || editablePath.startsWith(entry + "/"));
+}
+function isIgnorableArchiveMetadata(entry, editablePaths) {
+  if (!isSystemMetadataPath(entry)) return false;
+  const segments = pathSegments(entry);
+  if (segments.length === 0) return false;
+  if (segments[0] === "__MACOSX" || segments[0] === ".AppleDouble" || segments[0] === ".DS_Store" || segments[0].startsWith("._")) return true;
+  return editablePaths.some((editablePath) => entry === editablePath || entry.startsWith(editablePath + "/"));
+}
+function removeSystemMetadataUnder(dirPath) {
+  if (!fs.existsSync(dirPath)) return;
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (isSystemMetadataPath(entry.name)) {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+      const relativePath = path.relative(ROOT_DIR, fullPath) || entry.name;
+      console.log("removed system metadata: " + relativePath);
+      continue;
+    }
+    if (entry.isDirectory()) removeSystemMetadataUnder(fullPath);
+  }
+}
 async function downloadArchive(submission, targetPath) {
   if (!submission.archive_url) throw new Error("pending submission has no archive_url");
   const response = await fetch(new URL(submission.archive_url, API_URL).toString(), { headers: { "x-ecdlp-worker-token": WORKER_TOKEN } });
@@ -49,12 +78,13 @@ async function downloadArchive(submission, targetPath) {
   fs.writeFileSync(targetPath, buffer);
 }
 function validateArchiveEntries(manifest, archivePath) {
-  const listing = run("tar", ["-tzf", archivePath], { capture: true }).split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
-  const editablePaths = new Set((manifest.editablePaths || []).map((entry) => entry.replace(/\/+$/g, "") + "/"));
+  const listing = run("tar", ["-tzf", archivePath], { capture: true }).split(/\r?\n/).map((entry) => normalizeArchiveEntry(entry.trim())).filter(Boolean);
+  const editablePaths = (manifest.editablePaths || []).map((entry) => normalizeArchiveEntry(entry)).filter(Boolean);
   if (listing.length === 0) throw new Error("submission archive is empty");
   for (const entry of listing) {
     if (entry.startsWith("/") || entry.split("/").includes("..")) throw new Error("unsafe archive entry: " + entry);
-    if (![...editablePaths].some((editablePath) => entry === editablePath.slice(0, -1) || entry.startsWith(editablePath))) throw new Error("archive entry is outside editable paths: " + entry);
+    if (isIgnorableArchiveMetadata(entry, editablePaths)) continue;
+    if (!isEntryInEditableScope(entry, editablePaths)) throw new Error("archive entry is outside editable paths: " + entry);
   }
 }
 function prepareScripts() { for (const script of ["ecdlp.js", "setup.sh", "benchmark.sh"]) { const filePath = path.join(ROOT_DIR, script); if (fs.existsSync(filePath)) fs.chmodSync(filePath, fs.statSync(filePath).mode | 0o755); } }
@@ -65,11 +95,25 @@ function compareMetadata(metadata, submission) {
 function noteFileFor() { const notePath = ".trusted-worker-note.md"; fs.writeFileSync(path.join(ROOT_DIR, notePath), NOTE_TEXT + "\n"); return notePath; }
 function hasStagedChanges() { const result = spawnSync("git", ["diff", "--cached", "--quiet"], { cwd: ROOT_DIR, stdio: "ignore", shell: false }); if (result.error) throw result.error; return result.status === 1; }
 function currentCommit() { return run("git", ["rev-parse", "HEAD"], { capture: true }).trim(); }
-function acceptCommitMessage(submission, metadata) { return ["Accept " + submission.track_id + " submission " + submission.submission_id, "", "Submission: " + submission.submission_id, "Track: " + submission.track_id, "Score: " + metadata.localScore, "Artifact: " + metadata.artifactSha256, "Model: " + (submission.submitted_model || ""), submission.author_github_login ? "Author: " + submission.author_github_login + " <" + submission.author_github_login + "@users.noreply.github.com>" : ""].filter(Boolean).join("\n"); }
+function coAuthorTrailer(submission) {
+  if (!submission.author_github_login) return "";
+  const login = String(submission.author_github_login).trim();
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(login)) throw new Error("invalid author_github_login for co-author trailer");
+  const id = String(submission.author_github_id || submission.author_github_user_id || "").trim();
+  const email = /^\d+$/.test(id) ? id + "+" + login + "@users.noreply.github.com" : login + "@users.noreply.github.com";
+  return "Co-authored-by: " + login + " <" + email + ">";
+}
+function acceptCommitMessage(submission, metadata) { return ["Accept " + submission.track_id + " submission " + submission.submission_id, "", "Submission: " + submission.submission_id, "Track: " + submission.track_id, "Score: " + metadata.localScore, "Artifact: " + metadata.artifactSha256, "Model: " + (submission.submitted_model || ""), coAuthorTrailer(submission)].filter(Boolean).join("\n"); }
+function scrubSubmissionMetadata(manifest) {
+  for (const entry of fs.readdirSync(ROOT_DIR, { withFileTypes: true })) {
+    if (isSystemMetadataPath(entry.name)) fs.rmSync(path.join(ROOT_DIR, entry.name), { recursive: true, force: true });
+  }
+  for (const editablePath of manifest.editablePaths || []) removeSystemMetadataUnder(path.join(ROOT_DIR, editablePath));
+}
 function commitAndPush(submission, manifest, metadata) { for (const editablePath of manifest.editablePaths || []) run("git", ["add", editablePath]); if (!hasStagedChanges()) { console.log("No editable-path changes to commit; using current HEAD."); return currentCommit(); } run("git", ["config", "user.name", "ecdlp-trusted-worker"]); run("git", ["config", "user.email", "ecdlp-trusted-worker@users.noreply.github.com"]); run("git", ["commit", "-m", acceptCommitMessage(submission, metadata)]); run("git", ["push", "origin", "HEAD:main"]); return currentCommit(); }
 async function processSubmission(submission, manifest) {
   console.log("\nProcessing " + submission.submission_id + " (" + submission.track_id + ")");
-  const archivePath = path.join(ROOT_DIR, ".trusted-submission.tar.gz"); await downloadArchive(submission, archivePath); validateArchiveEntries(manifest, archivePath); resetGeneratedOutputs(); for (const editablePath of manifest.editablePaths || []) fs.rmSync(path.join(ROOT_DIR, editablePath), { recursive: true, force: true }); run("tar", ["-xzf", archivePath, "-C", ROOT_DIR]); prepareScripts(); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "setup"]); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "run", "--note", NOTE_TEXT]); run("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(ROOT_DIR, "tools", "package-submission.ps1"), "-NoteFile", noteFileFor(manifest), "-Model", submission.submitted_model || "trusted-worker"]); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "validate", path.join(ROOT_DIR, "dist", "submission-metadata.json")]); const metadata = readJson(path.join(ROOT_DIR, "dist", "submission-metadata.json")); compareMetadata(metadata, submission); if (DRY_RUN) { console.log("dry-run: not committing source or posting trusted-pass"); return; } const acceptedCommit = commitAndPush(submission, manifest, metadata); const response = await requestJson(API_URL + "/api/submissions/" + encodeURIComponent(submission.submission_id) + "/trusted-pass", { method: "POST", body: JSON.stringify({ status: "passed", report: { worker: process.env.GITHUB_WORKFLOW || "contest-repo-trusted-worker", run_id: process.env.GITHUB_RUN_ID || null, accepted_repository: process.env.GITHUB_REPOSITORY || null, accepted_commit_sha: acceptedCommit, score: metadata.localScore, artifact_binary_sha256: metadata.artifactSha256, archive_sha256: submission.archive_sha256 || null } }) }); console.log("accepted " + response.submission_id + ": " + response.status + "/" + response.rank_status);
+  const archivePath = path.join(ROOT_DIR, ".trusted-submission.tar.gz"); await downloadArchive(submission, archivePath); validateArchiveEntries(manifest, archivePath); resetGeneratedOutputs(); for (const editablePath of manifest.editablePaths || []) fs.rmSync(path.join(ROOT_DIR, editablePath), { recursive: true, force: true }); run("tar", ["-xzf", archivePath, "-C", ROOT_DIR]); scrubSubmissionMetadata(manifest); prepareScripts(); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "setup"]); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "run", "--note", NOTE_TEXT]); run("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(ROOT_DIR, "tools", "package-submission.ps1"), "-NoteFile", noteFileFor(manifest), "-Model", submission.submitted_model || "trusted-worker"]); run(process.execPath, [path.join(ROOT_DIR, "ecdlp.js"), "validate", path.join(ROOT_DIR, "dist", "submission-metadata.json")]); const metadata = readJson(path.join(ROOT_DIR, "dist", "submission-metadata.json")); compareMetadata(metadata, submission); if (DRY_RUN) { console.log("dry-run: not committing source or posting trusted-pass"); return; } const acceptedCommit = commitAndPush(submission, manifest, metadata); const response = await requestJson(API_URL + "/api/submissions/" + encodeURIComponent(submission.submission_id) + "/trusted-pass", { method: "POST", body: JSON.stringify({ status: "passed", report: { worker: process.env.GITHUB_WORKFLOW || "contest-repo-trusted-worker", run_id: process.env.GITHUB_RUN_ID || null, accepted_repository: process.env.GITHUB_REPOSITORY || null, accepted_commit_sha: acceptedCommit, score: metadata.localScore, artifact_binary_sha256: metadata.artifactSha256, archive_sha256: submission.archive_sha256 || null } }) }); console.log("accepted " + response.submission_id + ": " + response.status + "/" + response.rank_status);
 }
 async function reportTrustedFailure(submission, error) {
   if (DRY_RUN) return;
@@ -92,4 +136,8 @@ async function reportTrustedFailure(submission, error) {
   }
 }
 async function main() { if (process.argv.includes("--help") || process.argv.includes("-h")) return; if (!API_URL) throw new Error("ECDLP_API_URL is required"); if (!WORKER_TOKEN) throw new Error("ECDLP_TRUSTED_WORKER_TOKEN is required"); const manifest = readJson(path.join(ROOT_DIR, "benchmark.json")); const pending = await requestJson(API_URL + "/api/trusted-worker/submissions/pending?track_id=" + encodeURIComponent(manifest.name) + "&limit=" + encodeURIComponent(String(LIMIT))); if (!pending.rows.length) { console.log("No pending trusted-worker submissions for " + manifest.name + "."); return; } const failures = []; for (const submission of pending.rows) { try { await processSubmission(submission, manifest); } catch (error) { await reportTrustedFailure(submission, error); failures.push({ submission_id: submission.submission_id, error: error.message }); console.error("failed " + submission.submission_id + ": " + error.message); } } if (failures.length > 0) { console.error(JSON.stringify({ failures }, null, 2)); process.exit(1); } }
-main().catch((error) => { console.error("trusted worker error: " + error.message); process.exit(1); });
+export { acceptCommitMessage, coAuthorTrailer, isSystemMetadataPath, scrubSubmissionMetadata, validateArchiveEntries };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => { console.error("trusted worker error: " + error.message); process.exit(1); });
+}
