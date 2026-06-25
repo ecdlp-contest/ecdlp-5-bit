@@ -515,6 +515,24 @@ function printSubmissionStatus(response) {
   if (response.merge_commit_sha) console.log(`merge_commit_sha: ${response.merge_commit_sha}`);
 }
 
+async function assertScoreImprovesLeaderboard(trackId, localScore, args = []) {
+  const response = await requestJson(`${apiUrl(args)}/api/leaderboard?track_id=${encodeURIComponent(trackId)}`);
+  const rows = Array.isArray(response.rows) ? response.rows : [];
+  const best = rows
+    .filter((row) => Number.isFinite(Number(row.score)))
+    .sort((left, right) => Number(left.score) - Number(right.score))[0];
+  if (!best) {
+    console.log("score_gate: no ranked submissions yet");
+    return;
+  }
+  const bestScore = Number(best.score);
+  if (localScore >= bestScore) {
+    const id = best.submission_id || best.id || "unknown";
+    throw new Error(`local score ${localScore} is not better than current best ${bestScore} for ${trackId} (${id})`);
+  }
+  console.log(`score_gate: local score ${localScore} beats current best ${bestScore}`);
+}
+
 function isTerminalSubmission(response) {
   return response.status === "ranked" || response.status === "failed";
 }
@@ -653,6 +671,7 @@ async function submit(filePath, args) {
   const result = validatePackage(metadata, { trackId: getFlag(args, "--track", metadata.benchmark), metadataPath: filePath });
   printValidation(result);
   if (!result.ok) process.exit(1);
+  await assertScoreImprovesLeaderboard(result.trackId, result.score, args);
   const note = readNoteOption(args, filePath, metadata);
   const payload = {
     track_id: result.trackId,

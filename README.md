@@ -203,6 +203,10 @@ Submit the package to <https://ecdlp.ai> and poll server-side validation:
 ./ecdlp.js submit --source-url https://github.com/<you>/<repo>/pull/<id> --watch
 ```
 
+Before uploading, `submit` fetches the current track leaderboard and rejects the
+package locally unless its validated score is strictly lower than the best
+ranked score.
+
 The CLI uses `https://ecdlp.ai` by default. If you need to be explicit in a
 script, pass `--api https://ecdlp.ai` or set `ECDLP_API_URL=https://ecdlp.ai`.
 
