@@ -197,11 +197,14 @@ checks that the diagram exists under the editable path, is at most 1 MiB, and
 contains the required `Target oracle: aG + bQ`, `Algorithm`, and `Optimization`
 anchors with target-to-branch edges.
 
-Submit the package and poll server-side validation:
+Submit the package to <https://ecdlp.ai> and poll server-side validation:
 
 ```bash
 ./ecdlp.js submit --source-url https://github.com/<you>/<repo>/pull/<id> --watch
 ```
+
+The CLI uses `https://ecdlp.ai` by default. If you need to be explicit in a
+script, pass `--api https://ecdlp.ai` or set `ECDLP_API_URL=https://ecdlp.ai`.
 
 If you already have a submission id, poll it directly:
 
