@@ -9,7 +9,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const DEFAULT_API = "https://www.secp256k1.org";
+const DEFAULT_API = "https://ecdlp.ai";
 const MAX_NOTE_BYTES = 10 * 1024;
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_ARCHITECTURE_BYTES = 1024 * 1024;
@@ -110,8 +110,7 @@ function writeConfig(config) {
 }
 
 function apiUrl(args = []) {
-  const raw = (getFlag(args, "--api") || process.env.ECDLP_API_URL || readConfig().api_url || DEFAULT_API).replace(/\/$/, "");
-  return raw === "https://secp256k1.org" ? DEFAULT_API : raw;
+  return (getFlag(args, "--api") || process.env.ECDLP_API_URL || readConfig().api_url || DEFAULT_API).replace(/\/$/, "");
 }
 
 function apiToken() {

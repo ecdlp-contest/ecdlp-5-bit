@@ -174,7 +174,7 @@ This repository is the public contest baseline and submission surface for
 but the package submitted to the contest server must be built from this public
 baseline contract.
 
-Submissions require a contest API key. Open <https://secp256k1.org/account>,
+Submissions require a contest API key. Open <https://ecdlp.ai/account>,
 sign in with GitHub, create an API key, then save it locally:
 
 ```bash
