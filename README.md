@@ -284,3 +284,10 @@ oracle toward circuits small enough to test on near-term hardware.
 The full variable-`Q` input domain is still toy-scale but larger than the fixed
 oracle domain. The ranked validator intentionally keeps the same 9024-shot
 Fiat-Shamir convention as the point-double contest.
+
+## Credits
+This 5-bit Shor's ECDLP oracle contest was inspired by [https://ecdsa.fail](https://ecdsa.fail) and Google's paper
+["Securing Elliptic Curve Cryptocurrencies against Quantum Vulnerabilities:
+Resource Estimates and Mitigations"](https://arxiv.org/pdf/2603.28846). We thank the ecdsa-fail community for pioneering this effort.
+
+5-bit ECDLP visaulzation was from [@jackylee0424](https://github.com/jackylee0424/quantum-computing-lab)
