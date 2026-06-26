@@ -103,7 +103,11 @@ function coAuthorTrailer(submission) {
   const email = /^\d+$/.test(id) ? id + "+" + login + "@users.noreply.github.com" : login + "@users.noreply.github.com";
   return "Co-authored-by: " + login + " <" + email + ">";
 }
-function acceptCommitMessage(submission, metadata) { return ["Accept " + submission.track_id + " submission " + submission.submission_id, "", "Submission: " + submission.submission_id, "Track: " + submission.track_id, "Score: " + metadata.localScore, "Artifact: " + metadata.artifactSha256, "Model: " + (submission.submitted_model || ""), coAuthorTrailer(submission)].filter(Boolean).join("\n"); }
+function acceptCommitMessage(submission) {
+  const title = "Accept " + submission.track_id + " submission " + submission.submission_id;
+  const trailer = coAuthorTrailer(submission);
+  return trailer ? title + "\n\n" + trailer : title;
+}
 function scrubSubmissionMetadata(manifest) {
   for (const entry of fs.readdirSync(ROOT_DIR, { withFileTypes: true })) {
     if (isSystemMetadataPath(entry.name)) fs.rmSync(path.join(ROOT_DIR, entry.name), { recursive: true, force: true });
