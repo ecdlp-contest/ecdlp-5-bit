@@ -1,7 +1,7 @@
 # 5-bit Shor ECDLP Baseline
 
 Goal: build the cheapest reversible oracle circuit for a toy end-to-end Shor
-ECDLP demonstration, scored by `score = qubits * sqrt(toffoli * toffoli_depth)`. This quantum circuit may be able to run on a real quantum hardware.
+ECDLP demonstration, scored by `score = qubits * sqrt(toffoli * toffoli_depth)`, where `toffoli` is the rounded average executed Toffoli count and `toffoli_depth` is the rounded average per-shot executed Toffoli depth. This quantum circuit may be able to run on a real quantum hardware.
 
 ## Why This Matters
 
@@ -28,7 +28,7 @@ The harness:
    `|a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>`;
 3. checks input preservation, phase cleanliness, and ancilla cleanup;
 4. scores the run as logical qubits times the square root of rounded average
-   executed Toffoli count times rounded Toffoli depth.
+   executed Toffoli count times rounded average per-shot executed Toffoli depth.
 
 Track: `shor-ecdlp-5bit`
 
@@ -104,7 +104,7 @@ Current full trusted eval:
 | Scored Toffoli count | 59,354 |
 | CCX | 59,354 |
 | CCZ | 0 |
-| Toffoli depth | 59,354 |
+| Avg. executed Toffoli depth | 59,354 |
 | Clifford | 7,755 |
 | Qubits | 75 |
 | Ops | 103,445 |

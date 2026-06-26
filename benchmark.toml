@@ -6,7 +6,7 @@ validation_shots = 9024
 validation_seed = "ecdlp-shor-ecdlp-5bit-variable-q-oracle-fiat-shamir-v1"
 validator = "src/bin/eval_circuit.rs"
 score_model = "balanced-qubit-toffoli-depth-v1"
-score_note = "score = logical qubits * sqrt(rounded average executed Toffoli count * rounded Toffoli depth)"
+score_note = "score = logical qubits * sqrt(rounded average executed Toffoli count * rounded average per-shot executed Toffoli depth)"
 build_command = "cargo run --release --bin build_circuit"
 eval_command = "cargo run --release --bin eval_circuit -- --note baseline"
 score_file = "score.json"

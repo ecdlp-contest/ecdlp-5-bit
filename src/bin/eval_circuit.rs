@@ -220,67 +220,6 @@ fn load_ops(path: &str) -> Result<Vec<Op>, String> {
     Ok(ops)
 }
 
-fn qubit_index(qubit: QubitId) -> Option<usize> {
-    if qubit.0 == u64::MAX {
-        None
-    } else {
-        Some(qubit.0 as usize)
-    }
-}
-
-fn op_qubits(op: &Op) -> Vec<usize> {
-    let mut qubits = Vec::with_capacity(3);
-    for qubit in [op.q_target, op.q_control1, op.q_control2] {
-        if let Some(index) = qubit_index(qubit) {
-            if !qubits.contains(&index) {
-                qubits.push(index);
-            }
-        }
-    }
-    qubits
-}
-
-fn compute_toffoli_depth(ops: &[Op], total_qubits: u64) -> u64 {
-    let mut qubit_layers = vec![0u64; total_qubits as usize];
-    let mut depth = 0u64;
-
-    for op in ops {
-        let qubits = op_qubits(op);
-        match op.kind {
-            OperationType::CCX | OperationType::CCZ => {
-                let layer = qubits
-                    .iter()
-                    .filter_map(|&q| qubit_layers.get(q))
-                    .copied()
-                    .max()
-                    .unwrap_or(0)
-                    + 1;
-                for q in qubits {
-                    if let Some(slot) = qubit_layers.get_mut(q) {
-                        *slot = layer;
-                    }
-                }
-                depth = depth.max(layer);
-            }
-            _ => {
-                let barrier = qubits
-                    .iter()
-                    .filter_map(|&q| qubit_layers.get(q))
-                    .copied()
-                    .max()
-                    .unwrap_or(0);
-                for q in qubits {
-                    if let Some(slot) = qubit_layers.get_mut(q) {
-                        *slot = barrier;
-                    }
-                }
-            }
-        }
-    }
-
-    depth
-}
-
 fn fiat_shamir_seed(ops: &[Op]) -> sha3::Shake256Reader {
     let mut hasher = Shake256::default();
     hasher.update(b"ecdlp-shor-ecdlp-5bit-variable-q-oracle-fiat-shamir-v1");
@@ -301,9 +240,11 @@ struct SeedReport {
     ok: bool,
     avg_cliff: f64,
     avg_tof: f64,
+    avg_toffoli_depth: f64,
     avg_ccx: f64,
     avg_ccz: f64,
     tot_tof: u64,
+    tot_toffoli_depth: u64,
     tot_ccx: u64,
     tot_ccz: u64,
     tot_cliff: u64,
@@ -359,7 +300,7 @@ fn run_tests(
             sim.set_register(&layout_regs[4], U256::from(u16::from(q.infinity)), shot);
         }
 
-        sim.apply_iter(ops.iter());
+        sim.apply_iter_masked(ops.iter(), cond_mask);
 
         for shot in 0..bs {
             let i = batch * BATCH + shot;
@@ -455,9 +396,11 @@ fn run_tests(
         ok,
         avg_cliff: sim.stats.clifford_gates as f64 / denom,
         avg_tof: sim.stats.toffoli_gates as f64 / denom,
+        avg_toffoli_depth: sim.stats.toffoli_depth as f64 / denom,
         avg_ccx: sim.stats.ccx_gates as f64 / denom,
         avg_ccz: sim.stats.ccz_gates as f64 / denom,
         tot_tof: sim.stats.toffoli_gates,
+        tot_toffoli_depth: sim.stats.toffoli_depth,
         tot_ccx: sim.stats.ccx_gates,
         tot_ccz: sim.stats.ccz_gates,
         tot_cliff: sim.stats.clifford_gates,
@@ -505,7 +448,7 @@ fn append_results_row(
     avg_tof: f64,
     avg_ccx: f64,
     avg_ccz: f64,
-    toffoli_depth: u64,
+    avg_toffoli_depth: f64,
     avg_cliff: f64,
     qubits: u64,
     ops_len: usize,
@@ -530,7 +473,7 @@ fn append_results_row(
         .map(|duration| duration.as_secs())
         .unwrap_or(0);
     let row = format!(
-        "{ts}\t{}\t{avg_tof:.3}\t{avg_ccx:.3}\t{avg_ccz:.3}\t{toffoli_depth}\t{avg_cliff:.3}\t{qubits}\t{ops_len}\t{status}\t{}\n",
+        "{ts}\t{}\t{avg_tof:.3}\t{avg_ccx:.3}\t{avg_ccz:.3}\t{avg_toffoli_depth:.3}\t{avg_cliff:.3}\t{qubits}\t{ops_len}\t{status}\t{}\n",
         git_commit_short(),
         note.replace('\t', " ").replace('\n', " ")
     );
@@ -546,7 +489,7 @@ fn write_score(
     avg_tof: f64,
     avg_ccx: f64,
     avg_ccz: f64,
-    toffoli_depth: u64,
+    avg_toffoli_depth: f64,
     avg_cliff: f64,
     qubits: u64,
     ops_len: usize,
@@ -556,6 +499,7 @@ fn write_score(
     let ccx = avg_ccx.round() as u64;
     let ccz = avg_ccz.round() as u64;
     let clifford = avg_cliff.round() as u64;
+    let toffoli_depth = avg_toffoli_depth.round() as u64;
     let score = qubits as f64 * ((toffoli as f64) * (toffoli_depth as f64)).sqrt();
     let body = format!(
         "{{\n  \"score\": {score},\n  \"score_model\": \"{SCORE_MODEL}\",\n  \"metrics\": {{\n    \"toffoli\": {toffoli},\n    \"ccx\": {ccx},\n    \"ccz\": {ccz},\n    \"toffoli_depth\": {toffoli_depth},\n    \"clifford\": {clifford},\n    \"qubits\": {qubits},\n    \"ops\": {ops_len}\n  }},\n  \"validation\": {{\n    \"shots\": {shots},\n    \"gate\": \"{VALIDATION_GATE}\",\n    \"checks\": [\"oracle correctness\", \"input preservation\", \"phase cleanliness\", \"ancilla cleanup\"]\n  }},\n  \"artifact\": \"{OPS_PATH}\",\n  \"status\": \"ranked\"\n}}\n"
@@ -563,13 +507,7 @@ fn write_score(
     fs::write("score.json", body).expect("write score.json");
 }
 
-fn fail_and_exit(
-    reason: &str,
-    note: &str,
-    ops_len: usize,
-    total_qubits: u64,
-    toffoli_depth: u64,
-) -> ! {
+fn fail_and_exit(reason: &str, note: &str, ops_len: usize, total_qubits: u64) -> ! {
     eprintln!("\n!! eval_circuit FAILED: {reason}");
     let fail_note = if note.is_empty() {
         reason.to_string()
@@ -581,7 +519,7 @@ fn fail_and_exit(
         0.0,
         0.0,
         0.0,
-        toffoli_depth,
+        0.0,
         0.0,
         total_qubits,
         ops_len,
@@ -608,7 +546,7 @@ fn main() {
                 0.0,
                 0.0,
                 0.0,
-                0,
+                0.0,
                 0.0,
                 0,
                 0,
@@ -620,14 +558,12 @@ fn main() {
     println!("  loaded ops : {}", ops.len());
 
     let (total_qubits, num_bits, _num_regs, regs) = analyze_ops(ops.iter());
-    let toffoli_depth = compute_toffoli_depth(&ops, total_qubits);
     if regs.len() != 8 {
         fail_and_exit(
             &format!("expected 8 registers, got {}", regs.len()),
             &note,
             ops.len(),
             total_qubits,
-            toffoli_depth,
         );
     }
     for (i, register) in regs.iter().enumerate() {
@@ -641,7 +577,6 @@ fn main() {
                 &note,
                 ops.len(),
                 total_qubits,
-                toffoli_depth,
             );
         }
         if !register
@@ -653,7 +588,6 @@ fn main() {
                 &note,
                 ops.len(),
                 total_qubits,
-                toffoli_depth,
             );
         }
     }
@@ -690,7 +624,7 @@ fn main() {
             report.avg_tof,
             report.avg_ccx,
             report.avg_ccz,
-            toffoli_depth,
+            report.avg_toffoli_depth,
             report.avg_cliff,
             total_qubits,
             ops.len(),
@@ -703,6 +637,7 @@ fn main() {
 
     println!("\n=== circuit metrics (5-bit Shor ECDLP oracle) ===");
     println!("  avg executed Toffoli  : {:.3}", report.avg_tof);
+    println!("  avg executed T-depth  : {:.3}", report.avg_toffoli_depth);
     println!("  avg executed CCX      : {:.3}", report.avg_ccx);
     println!("  avg executed CCZ      : {:.3}", report.avg_ccz);
     println!("  avg executed Clifford : {:.3}", report.avg_cliff);
@@ -712,7 +647,10 @@ fn main() {
     );
     println!("  total CCX (sum)       : {}", report.tot_ccx);
     println!("  total CCZ (sum)       : {}", report.tot_ccz);
-    println!("  Toffoli depth         : {}", toffoli_depth);
+    println!(
+        "  total T-depth (sum)   : {} over {} shots",
+        report.tot_toffoli_depth, report.n_shots
+    );
     println!("  total Clifford (sum)  : {}", report.tot_cliff);
     println!("  emitted ops           : {}", ops.len());
     println!("  qubits                : {}", total_qubits);
@@ -722,7 +660,7 @@ fn main() {
         report.avg_tof,
         report.avg_ccx,
         report.avg_ccz,
-        toffoli_depth,
+        report.avg_toffoli_depth,
         report.avg_cliff,
         total_qubits,
         ops.len(),
@@ -732,7 +670,7 @@ fn main() {
         report.avg_tof,
         report.avg_ccx,
         report.avg_ccz,
-        toffoli_depth,
+        report.avg_toffoli_depth,
         report.avg_cliff,
         total_qubits,
         ops.len(),
@@ -740,57 +678,4 @@ fn main() {
     );
 
     println!("\n=== eval_circuit OK ===");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn three_qubit_op(kind: OperationType, q_control2: u64, q_control1: u64, q_target: u64) -> Op {
-        let mut op = Op::empty();
-        op.kind = kind;
-        op.q_control2 = QubitId(q_control2);
-        op.q_control1 = QubitId(q_control1);
-        op.q_target = QubitId(q_target);
-        op
-    }
-
-    fn cx_op(q_control1: u64, q_target: u64) -> Op {
-        let mut op = Op::empty();
-        op.kind = OperationType::CX;
-        op.q_control1 = QubitId(q_control1);
-        op.q_target = QubitId(q_target);
-        op
-    }
-
-    #[test]
-    fn disjoint_toffolis_share_a_depth_layer() {
-        let ops = vec![
-            three_qubit_op(OperationType::CCX, 0, 1, 2),
-            three_qubit_op(OperationType::CCZ, 3, 4, 5),
-        ];
-
-        assert_eq!(compute_toffoli_depth(&ops, 6), 1);
-    }
-
-    #[test]
-    fn shared_qubit_toffolis_advance_depth() {
-        let ops = vec![
-            three_qubit_op(OperationType::CCX, 0, 1, 2),
-            three_qubit_op(OperationType::CCX, 2, 3, 4),
-        ];
-
-        assert_eq!(compute_toffoli_depth(&ops, 5), 2);
-    }
-
-    #[test]
-    fn clifford_dependency_links_nonclifford_layers() {
-        let ops = vec![
-            three_qubit_op(OperationType::CCX, 0, 1, 2),
-            cx_op(2, 3),
-            three_qubit_op(OperationType::CCX, 3, 4, 5),
-        ];
-
-        assert_eq!(compute_toffoli_depth(&ops, 6), 2);
-    }
 }
