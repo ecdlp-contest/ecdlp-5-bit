@@ -45,6 +45,18 @@ installed_toolchain_for_channel() {
   return 1
 }
 
+configured_cargo_target_dir() {
+  local config_file=".cargo/config.toml" target_dir=""
+  if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+    printf '%s\n' "${CARGO_TARGET_DIR}"
+    return 0
+  fi
+  if [[ -f "${config_file}" ]]; then
+    target_dir="$(sed -n 's/^[[:space:]]*target-dir[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${config_file}" | sed -n '1p')"
+  fi
+  printf '%s\n' "${target_dir:-target}"
+}
+
 require_offline_rust_toolchain() {
   if [[ -n "${RUSTUP_TOOLCHAIN:-}" ]] || ! command -v rustup >/dev/null 2>&1; then
     return 0
@@ -90,7 +102,7 @@ export CARGO_NET_OFFLINE=true
 
 rm -f ops.bin score.json
 
-target_dir="${CARGO_TARGET_DIR:-target}"
+target_dir="$(configured_cargo_target_dir)"
 RUSTFLAGS="-C linker=${compiler}" cargo build --release --locked --offline --bin build_circuit --bin eval_circuit
 if [[ "${target_dir}" = /* ]]; then
   target_abs="${target_dir}"
