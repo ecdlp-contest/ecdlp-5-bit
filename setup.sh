@@ -175,6 +175,7 @@ if [[ -n "${channel}" ]] && command -v rustup >/dev/null 2>&1; then
     echo "setup.sh: failed to install Rust toolchain '${channel}'" >&2
     exit 1
   fi
+  rustup component add rustfmt --toolchain "${toolchain}"
   export RUSTUP_TOOLCHAIN="${toolchain}"
 fi
 
