@@ -18,7 +18,7 @@ $MaxArchitectureBytes = 1024 * 1024
 $RequiredShots = 9024
 $RequiredGate = "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle"
 $RequiredBenchmark = "shor-ecdlp-5bit"
-$RequiredScoreModel = "primitive-ccx-ccz-v1"
+$RequiredScoreModel = "balanced-qubit-toffoli-depth-v1"
 $RequiredArtifact = "ops.bin"
 $RequiredArchitecturePath = "src/shor_oracle/architecture.mmd"
 
@@ -208,10 +208,21 @@ try {
   }
   Write-Host "Hashing artifact: $($score.artifact) ($artifactBytes bytes)"
   $artifactSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-  foreach ($metricName in @("toffoli", "ccx", "ccz", "clifford", "qubits", "ops")) {
+  foreach ($metricName in @("toffoli", "ccx", "ccz", "toffoli_depth", "clifford", "qubits", "ops")) {
     if (-not $score.metrics.PSObject.Properties.Name.Contains($metricName)) {
       throw "score.json metrics.$metricName is missing"
     }
+  }
+  $expectedScore = [math]::Round([double] $score.metrics.qubits) * [math]::Sqrt(
+    [math]::Round([double] $score.metrics.toffoli) * [math]::Round([double] $score.metrics.toffoli_depth)
+  )
+  $actualScore = [double] $score.score
+  $scoreTolerance = 2.220446049250313e-16 * [math]::Max(
+    1.0,
+    [math]::Max([math]::Abs($actualScore), [math]::Abs($expectedScore))
+  ) * 8
+  if ([double]::IsNaN($actualScore) -or [double]::IsInfinity($actualScore) -or [math]::Abs($actualScore - $expectedScore) -gt $scoreTolerance) {
+    throw "score.json score must equal metrics.qubits * sqrt(round(metrics.toffoli) * round(metrics.toffoli_depth)) ($expectedScore)"
   }
 
   $outDirPath = Resolve-RepoPath $RepoRoot $OutDir

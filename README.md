@@ -1,7 +1,7 @@
 # 5-bit Shor ECDLP Baseline
 
 Goal: build the cheapest reversible oracle circuit for a toy end-to-end Shor
-ECDLP demonstration, scored by `score = toffoli * qubits`. This quantum circuit may be able to run on a real quantum hardware.
+ECDLP demonstration, scored by `score = qubits * sqrt(toffoli * toffoli_depth)`. This quantum circuit may be able to run on a real quantum hardware.
 
 ## Why This Matters
 
@@ -16,7 +16,7 @@ This repository follows the [ECDSA Fail](https://ecdsa.fail) baseline convention
 - `build_circuit` is the untrusted build stage and emits `ops.bin`;
 - `eval_circuit` is the trusted stage and never imports contestant code;
 - the trusted evaluator validates 9024 Fiat-Shamir oracle shots;
-- `score.json` and `results.tsv` record primitive CCX/CCZ metrics.
+- `score.json` and `results.tsv` record primitive CCX/CCZ and Toffoli-depth metrics.
 
 ## The Benchmark, Precisely
 
@@ -27,12 +27,12 @@ The harness:
 2. validates 9024 Fiat-Shamir shots against
    `|a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>`;
 3. checks input preservation, phase cleanliness, and ancilla cleanup;
-4. scores the run as rounded average executed Toffoli count times logical
-   qubits.
+4. scores the run as logical qubits times the square root of rounded average
+   executed Toffoli count times rounded Toffoli depth.
 
 Track: `shor-ecdlp-5bit`
 
-Score model: `primitive-ccx-ccz-v1`
+Score model: `balanced-qubit-toffoli-depth-v1`
 
 Curve:
 
@@ -101,13 +101,21 @@ Current full trusted eval:
 | Metric | Value |
 | --- | ---: |
 | Shots | 9024 OK |
-| Toffoli | 59,354 |
+| Scored Toffoli count | 59,354 |
 | CCX | 59,354 |
 | CCZ | 0 |
+| Toffoli depth | 59,354 |
 | Clifford | 7,755 |
 | Qubits | 75 |
 | Ops | 103,445 |
 | Score | 4,451,550 |
+
+`Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count
+is the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir
+shots, matching the Google resource-estimate convention. In this baseline the
+emitted and executed counts are equal because every shot executes the same CCX
+sequence; a future conditional circuit may emit more gates than it executes on
+average.
 
 ## How To Run
 

@@ -30,7 +30,7 @@ Confirm `score.json` contains:
 
 ```text
 status: ranked
-score_model: primitive-ccx-ccz-v1
+score_model: balanced-qubit-toffoli-depth-v1
 validation.shots: 9024
 validation.gate: fiat_shamir_shor_ecdlp_5bit_variable_q_oracle
 ```

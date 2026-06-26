@@ -43,8 +43,8 @@ try {
   if ($score.validation.shots -ne 9024 -or $score.validation.gate -ne "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle") {
     throw "score.json does not show the required 9024-shot Fiat-Shamir oracle gate"
   }
-  if ($score.score_model -ne "primitive-ccx-ccz-v1") {
-    throw "score.json score_model is not primitive-ccx-ccz-v1"
+  if ($score.score_model -ne "balanced-qubit-toffoli-depth-v1") {
+    throw "score.json score_model is not balanced-qubit-toffoli-depth-v1"
   }
 
   $message = @"
@@ -53,6 +53,7 @@ $Title
 Score: $($score.score)
 Score model: $($score.score_model)
 Toffoli: $($score.metrics.toffoli)
+Toffoli depth: $($score.metrics.toffoli_depth)
 CCX: $($score.metrics.ccx)
 CCZ: $($score.metrics.ccz)
 Clifford: $($score.metrics.clifford)

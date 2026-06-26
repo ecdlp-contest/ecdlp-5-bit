@@ -14,7 +14,7 @@ const MAX_NOTE_BYTES = 10 * 1024;
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_ARCHITECTURE_BYTES = 1024 * 1024;
 const REQUIRED_SHOTS = 9024;
-const SCORE_MODEL = "primitive-ccx-ccz-v1";
+const SCORE_MODEL = "balanced-qubit-toffoli-depth-v1";
 const REQUIRED_ARTIFACT = "ops.bin";
 const REQUIRED_ARCHITECTURE_LABELS = ["Target oracle: aG + bQ", "Algorithm", "Optimization"];
 const REQUIRED_ARCHITECTURE_PATH = "src/shor_oracle/architecture.mmd";
@@ -393,6 +393,11 @@ function sameStringArray(left, right) {
   return left.every((value, index) => value === right[index]);
 }
 
+function scoresMatch(left, right) {
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  return Math.abs(left - right) <= Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 8;
+}
+
 function packageSubmission(args) {
   const manifest = repoManifest(getFlag(args, "--manifest", "benchmark.json"));
   const spec = TRACKS[manifest.name];
@@ -429,7 +434,7 @@ function packageSubmission(args) {
   }
   if (score.score_model !== SCORE_MODEL) throw new Error(`score.json score_model must be ${SCORE_MODEL}`);
   if (score.artifact !== REQUIRED_ARTIFACT) throw new Error(`score.json artifact must be ${REQUIRED_ARTIFACT}`);
-  for (const metricName of ["toffoli", "ccx", "ccz", "clifford", "qubits", "ops"]) {
+  for (const metricName of ["toffoli", "ccx", "ccz", "toffoli_depth", "clifford", "qubits", "ops"]) {
     if (!Number.isFinite(score.metrics?.[metricName]) || score.metrics[metricName] < 0) {
       throw new Error(`score.json metrics.${metricName} is missing or invalid`);
     }
@@ -526,12 +531,12 @@ function validatePackage(metadata, options = {}) {
   if (metadata.scoreModel !== SCORE_MODEL) error("PACKAGE_SCORE_MODEL", `scoreModel must be ${SCORE_MODEL}`);
 
   const metrics = metadata.metrics || {};
-  for (const metricName of ["toffoli", "ccx", "ccz", "clifford", "qubits", "ops"]) {
+  for (const metricName of ["toffoli", "ccx", "ccz", "toffoli_depth", "clifford", "qubits", "ops"]) {
     if (!Number.isFinite(metrics[metricName]) || metrics[metricName] < 0) error("PACKAGE_METRIC", `metrics.${metricName} must be a non-negative finite number`);
   }
-  const score = Math.round(Number(metrics.toffoli || 0)) * Math.round(Number(metrics.qubits || 0));
-  if (!Number.isInteger(metadata.localScore) || metadata.localScore !== score) {
-    error("PACKAGE_SCORE", `localScore must equal round(metrics.toffoli) * metrics.qubits (${score})`);
+  const score = Math.round(Number(metrics.qubits || 0)) * Math.sqrt(Math.round(Number(metrics.toffoli || 0)) * Math.round(Number(metrics.toffoli_depth || 0)));
+  if (!scoresMatch(Number(metadata.localScore), score)) {
+    error("PACKAGE_SCORE", `localScore must equal metrics.qubits * sqrt(round(metrics.toffoli) * round(metrics.toffoli_depth)) (${score})`);
   }
 
   if (metadata.validation?.shots !== REQUIRED_SHOTS) error("PACKAGE_VALIDATION_SHOTS", `validation.shots must be ${REQUIRED_SHOTS}`);

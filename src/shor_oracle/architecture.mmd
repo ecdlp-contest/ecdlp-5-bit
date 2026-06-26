@@ -73,7 +73,7 @@ flowchart TD
   M2 --> Eval
   M3 --> Eval
 
-  Eval --> Score["Score: rounded Toffoli count times logical qubits"]
+  Eval --> Score["Score: logical qubits times sqrt(Toffoli count and depth)"]
   Score --> Choice["Chosen implementation"]
   Choice --> Artifact["Generated artifacts: ops.bin and score.json"]
   Choice --> AG

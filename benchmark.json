@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "name": "shor-ecdlp-5bit",
-  "description": "Optimize the primitive CCX/CCZ score for a 5-bit Shor ECDLP oracle circuit.",
-  "scoreModel": "primitive-ccx-ccz-v1",
-  "scoreNote": "score = rounded average executed Toffoli count times logical qubits.",
+  "description": "Optimize the balanced logical-qubit, Toffoli-count, and Toffoli-depth score for a 5-bit Shor ECDLP oracle circuit.",
+  "scoreModel": "balanced-qubit-toffoli-depth-v1",
+  "scoreNote": "score = logical qubits * sqrt(rounded average executed Toffoli count * rounded Toffoli depth).",
   "category": "rust",
   "direction": "-",
   "editablePaths": [
