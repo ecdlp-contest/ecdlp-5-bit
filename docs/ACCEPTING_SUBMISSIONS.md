@@ -7,6 +7,9 @@ Only Track 1 is active for public submissions. Accept changes under
 `src/shor_oracle/`; `src/qft/` and `src/full_shor/` remain reserved and
 unscored until separate track contracts exist.
 
+`README.md` is the canonical contestant-facing submission guide. This document
+is the maintainer-side acceptance checklist for reruns and merge decisions.
+
 ## Checklist
 
 Run from the repository root:
@@ -19,10 +22,9 @@ cargo fmt --check
 ./ecdlp.js validate
 ```
 
-Confirm the source tree includes `src/shor_oracle/architecture.mmd`. The diagram
-must be at most 1 MiB and contain the required top-level anchors
-`Target oracle: aG + bQ`, `Algorithm`, and `Optimization`, with the target
-anchor branching to both explanation anchors.
+Confirm `./ecdlp.js package` and `./ecdlp.js validate` accept
+`src/shor_oracle/architecture.mmd`; the exact diagram contract is documented in
+`README.md`.
 
 Confirm `score.json` contains:
 
@@ -58,8 +60,8 @@ after a real optimization changes `ops.bin`.
 Use `tools/prepare-acceptance.ps1` to generate a commit-message draft with the
 score, metrics, validation gate, model attribution, and co-author trailer.
 
-If the submitter uploaded a package record to the contest website, accept it
-only after the trusted rerun and source merge decision:
+If the submitter uploaded a package record to <https://ecdlp.ai>, accept it only
+after the trusted rerun and source merge decision:
 
 ```bash
 # Run from the private contest maintainer CLI/API, not this public baseline helper.

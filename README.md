@@ -1,9 +1,16 @@
 # 5-bit Shor ECDLP Baseline
 
 Goal: build the cheapest reversible oracle circuit for a toy end-to-end Shor
-ECDLP demonstration, scored by `score = toffoli * qubits`.
+ECDLP demonstration, scored by `score = toffoli * qubits`. This quantum circuit may be able to run on a real quantum hardware.
 
-This repository follows the ECDSA Fail baseline convention:
+## Why This Matters
+
+This toy 5-bit track makes the expensive reversible oracle inside Shor's ECDLP
+loop concrete enough to build, test, and optimize end to end. A lower oracle
+score means fewer non-Clifford resources and fewer live qubits in the part of
+the circuit that dominates repeated group arithmetic.
+
+This repository follows the [ECDSA Fail](https://ecdsa.fail) baseline convention:
 
 - contestant code lives under `src/shor_oracle/`;
 - `build_circuit` is the untrusted build stage and emits `ops.bin`;
@@ -11,7 +18,17 @@ This repository follows the ECDSA Fail baseline convention:
 - the trusted evaluator validates 9024 Fiat-Shamir oracle shots;
 - `score.json` and `results.tsv` record primitive CCX/CCZ metrics.
 
-## Contract
+## The Benchmark, Precisely
+
+The harness:
+
+1. builds an op stream by running the untrusted `src/shor_oracle`
+   implementation;
+2. validates 9024 Fiat-Shamir shots against
+   `|a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>`;
+3. checks input preservation, phase cleanliness, and ancilla cleanup;
+4. scores the run as rounded average executed Toffoli count times logical
+   qubits.
 
 Track: `shor-ecdlp-5bit`
 
@@ -49,6 +66,19 @@ Raw 5-bit scalar inputs are interpreted modulo the group order `21`, so the bit
 pattern `21` is treated as scalar `0`. The trusted evaluator supplies valid
 group points `Q = kG` after the circuit is built.
 
+### What Valid Means
+
+A run is rejected if any of the following fails:
+
+- Oracle correctness: all 9024 Fiat-Shamir shots must produce the expected
+  `aG + bQ` output point.
+- Input preservation: the `a`, `b`, and `Q` input registers must remain
+  unchanged.
+- Phase cleanliness: no leftover global phase may remain across the simulated
+  shot batch.
+- Ancilla cleanup: every non-register qubit must end in zero after the oracle
+  runs.
+
 ## Baseline
 
 The baseline in `src/shor_oracle/mod.rs` is intentionally direct: it emits a
@@ -59,25 +89,25 @@ arithmetic and adding QFT/sampling machinery.
 
 Current expected static shape:
 
-```text
-input/output qubits: 32
-lookup scratch: 43
-logical qubits: 75
-static CCX: 59,354
-```
+| Metric | Value |
+| --- | ---: |
+| Input/output qubits | 32 |
+| Lookup scratch | 43 |
+| Logical qubits | 75 |
+| Static CCX | 59,354 |
 
 Current full trusted eval:
 
-```text
-9024 shots OK
-toffoli: 59,354
-ccx: 59,354
-ccz: 0
-clifford: 7,755
-qubits: 75
-ops: 103,445
-score: 4,451,550
-```
+| Metric | Value |
+| --- | ---: |
+| Shots | 9024 OK |
+| Toffoli | 59,354 |
+| CCX | 59,354 |
+| CCZ | 0 |
+| Clifford | 7,755 |
+| Qubits | 75 |
+| Ops | 103,445 |
+| Score | 4,451,550 |
 
 ## How To Run
 
@@ -148,6 +178,11 @@ Use the `Algorithm` branch to show the structural decomposition of the oracle,
 and the `Optimization` branch to show search islands, structural knobs, score
 tradeoffs, and the chosen implementation.
 
+As you iterate, keep Markdown notes under `src/shor_oracle/memory/` capturing
+approaches that worked, approaches that failed, and the reasoning behind
+important choices. Treat existing notes as leads: verify claims and rerun the
+benchmark before relying on them.
+
 Do not change the trusted harness when comparing submissions:
 
 - `src/bin/build_circuit.rs`
@@ -166,6 +201,14 @@ src/full_shor/    future full-Shor integration layer
 ```
 
 Only `src/shor_oracle/` is part of the current submission boundary.
+
+## Documentation Map
+
+- `README.md`: canonical benchmark contract and public submission flow.
+- `CONTRIBUTING.md`: short pull-request checklist for score submissions.
+- `docs/CONTENDER_PLAYBOOK.md`: optimization loop and implementation ideas.
+- `docs/ACCEPTING_SUBMISSIONS.md`: maintainer rerun and acceptance checklist.
+- `docs/tracks/`: compact status notes for scored and reserved track folders.
 
 ## Official Submission Flow
 
@@ -192,10 +235,8 @@ cargo fmt --check
 ./ecdlp.js validate
 ```
 
-The package must include `src/shor_oracle/architecture.mmd`. The contest server
-checks that the diagram exists under the editable path, is at most 1 MiB, and
-contains the required `Target oracle: aG + bQ`, `Algorithm`, and `Optimization`
-anchors with target-to-branch edges.
+The package must include `src/shor_oracle/architecture.mmd` matching the diagram
+contract in `What You Can Edit`.
 
 Submit the package to <https://ecdlp.ai> and poll server-side validation:
 

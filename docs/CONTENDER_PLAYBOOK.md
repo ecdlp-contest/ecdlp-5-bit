@@ -18,22 +18,14 @@ both.
    `src/shor_oracle/memory/`.
 5. Update `src/shor_oracle/architecture.mmd` with the submitted algorithm shape
    and optimization path.
-6. Package only after a trusted ranked run.
+6. Follow the package, validate, and submit flow in `README.md` only after a
+   trusted ranked run.
 
 ## Architecture Diagram
 
-Submissions must include `src/shor_oracle/architecture.mmd`, capped at 1 MiB.
-The diagram must contain exact top-level anchors:
-
-```text
-Target oracle: aG + bQ
-Algorithm
-Optimization
-```
-
-`Target oracle: aG + bQ` must branch to both `Algorithm` and `Optimization`.
-Use `Algorithm` for structural decomposition and `Optimization` for search
-islands, structural knobs, score tradeoffs, and the chosen implementation.
+Submissions must include `src/shor_oracle/architecture.mmd`. `README.md` is the
+canonical source for the exact diagram contract; use this playbook only for
+optimization workflow notes.
 
 ## Useful Directions
 

@@ -2,7 +2,10 @@
 
 This repository is the public `shor-ecdlp-5bit` benchmark workspace.
 
-## What To Edit
+The canonical contestant instructions live in `README.md`. This file only
+summarizes the contribution checklist for pull requests.
+
+## Editable Boundary
 
 Contestant changes should stay in:
 
@@ -10,33 +13,19 @@ Contestant changes should stay in:
 src/shor_oracle/
 ```
 
-Add notes about the approach, failed variants, and validation evidence under:
+Keep approach notes, failed variants, and validation evidence under:
 
 ```text
 src/shor_oracle/memory/
 ```
 
-Each submission must include a Mermaid architecture diagram:
+Every score submission must include `src/shor_oracle/architecture.mmd`. The
+diagram contract is documented in `README.md` and enforced by `./ecdlp.js
+package` / `./ecdlp.js validate`.
 
-```text
-src/shor_oracle/architecture.mmd
-```
-
-The diagram must be at most 1 MiB and contain these exact top-level anchors:
-
-```text
-Target oracle: aG + bQ
-Algorithm
-Optimization
-```
-
-The target anchor must branch to `Algorithm` and `Optimization`. Use the
-algorithm branch for the oracle structure and the optimization branch for
-search islands, structural knobs, score tradeoffs, and the chosen
-implementation.
-
-Do not change the trusted harness, simulator, lockfile, or benchmark metadata in
-a score submission unless the PR is explicitly about benchmark infrastructure.
+Do not change the trusted harness, simulator, lockfile, benchmark metadata, QFT
+demo, or full-Shor integration folders in a score submission unless the PR is
+explicitly about benchmark infrastructure.
 
 ## Required Local Check
 
@@ -44,10 +33,10 @@ Run:
 
 ```bash
 cargo fmt --check
-ecdlp setup
-ecdlp run --note "short description"
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools/package-submission.ps1 -NoteFile src/shor_oracle/memory/README.md -Model "GPT-5"
-ecdlp validate
+./ecdlp.js setup
+./ecdlp.js run --note "short description"
+./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
+./ecdlp.js validate
 ```
 
 A score claim is only meaningful when the evaluator reports:
