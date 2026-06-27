@@ -1,9 +1,11 @@
 # 5-bit Shor ECDLP Oracle Baseline
 
-Goal: build the cheapest reversible oracle circuit for a 5-bit toy Shor
-ECDLP oracle, scored by `score = qubits * sqrt(toffoli * toffoli_depth)`, where `toffoli` is the rounded average executed Toffoli count and `toffoli_depth` is the rounded average per-shot executed Toffoli depth. 
+Goal: build the cheapest reversible oracle circuit for a 5-bit toy Shor ECDLP
+oracle, scored by `score = qubits * sqrt(toffoli * toffoli_depth)`, where
+`toffoli` is the rounded average executed Toffoli count and `toffoli_depth` is
+the rounded average per-shot executed Toffoli depth.
 
-This quantum circuit may be able to run on a real quantum hardware.
+This quantum circuit may be able to run on real quantum hardware.
 
 ## Why This Matters
 
@@ -57,6 +59,7 @@ GitHub and create an API key when they are ready to submit to ecdlp.ai.
 Use this local loop:
 1. Run ecdlp setup if the repo is not already prepared.
 2. Modify src/shor_oracle/ and update src/shor_oracle/architecture.mmd plus
+   src/shor_oracle/memory/README.md with the approach and result.
 3. Run cargo fmt --check and ecdlp run --note "short description".
 4. Package with ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
 5. Run ecdlp validate before proposing submission.
@@ -69,7 +72,7 @@ When ready to submit, ask the user to open https://ecdlp.ai/account, sign in
 with GitHub, create an API key, and run:
 
 ecdlp login <api-key>
-ecdlp submit --help
+ecdlp submit --watch
 ```
 
 ## Benchmark
@@ -171,36 +174,6 @@ emitted and executed counts are equal because every shot executes the same CCX
 sequence; a future conditional circuit may emit more gates than it executes on
 average.
 
-## How To Run
-
-Manifest-controlled flow:
-
-```bash
-./ecdlp.js setup
-./ecdlp.js run --note "baseline 5-bit Shor ECDLP oracle"
-```
-
-or directly:
-
-```bash
-./setup.sh
-./benchmark.sh --note "baseline 5-bit Shor ECDLP oracle"
-```
-
-On Windows:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\benchmark.ps1 -Note "baseline 5-bit Shor ECDLP oracle"
-```
-
-The evaluator writes:
-
-- `ops.bin`
-- `score.json`
-- `results.tsv`
-
-
 ## What You Can Edit
 
 Contestant changes should stay in:
@@ -255,87 +228,101 @@ Do not change the trusted harness when comparing submissions:
 - `src/sim.rs`
 - `Cargo.toml`
 
-## Implementation Folders
+Implementation folders:
 
 ```text
-src/shor_oracle/  scored oracle implementation
+src/shor_oracle/  scored oracle implementation; current submission boundary
 src/qft/          unscored QFT and sampling support
 src/full_shor/    future full-Shor integration layer
 ```
 
-Only `src/shor_oracle/` is part of the current submission boundary.
+## Local Workflow
 
-## Documentation Map
-
-- `README.md`: canonical benchmark contract and public submission flow.
-- `CONTRIBUTING.md`: short pull-request checklist for score submissions.
-- `docs/CONTENDER_PLAYBOOK.md`: optimization loop and implementation ideas.
-- `docs/ACCEPTING_SUBMISSIONS.md`: maintainer rerun and acceptance checklist.
-- `docs/tracks/`: compact status notes for scored and reserved track folders.
-
-## Official Submission Flow
-
-This repository is the public contest baseline and submission surface for
-`shor-ecdlp-5bit`. You may keep your fork or branch private while testing,
-but the package submitted to the contest server must be built from this public
-baseline contract.
-
-Submissions require a contest API key. Open <https://ecdlp.ai/account>,
-sign in with GitHub, create an API key, then save it locally:
+Use `ecdlp` after installing from `https://ecdlp.ai/install.sh`. If you cloned
+the repo manually, run `./ecdlp.js` from the repo root instead.
 
 ```bash
-./ecdlp.js login <api-key>
-./ecdlp.js config
+ecdlp setup
+ecdlp run --note "short description"
 ```
 
-Build, score, package, and validate from the repository root:
+The evaluator writes `ops.bin`, `score.json`, and `results.tsv`. These are
+generated benchmark artifacts; do not hand-edit them.
+
+For a submission candidate:
 
 ```bash
 cargo fmt --check
-./ecdlp.js setup
-./ecdlp.js run --note "short description"
-./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
-./ecdlp.js validate
+ecdlp package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
+ecdlp validate
 ```
 
-The package must include `src/shor_oracle/architecture.mmd` matching the diagram
-contract in `What You Can Edit`.
-
-Submit the package to <https://ecdlp.ai> and poll server-side validation:
-
-```bash
-./ecdlp.js submit --watch
-```
-
-Before uploading, `submit` fetches the current track leaderboard and rejects the
-package locally unless its validated score is strictly lower than the best
-ranked score.
-
-The CLI uses `https://ecdlp.ai` by default. If you need to be explicit in a
-script, pass `--api https://ecdlp.ai` or set `ECDLP_API_URL=https://ecdlp.ai`.
-
-If you already have a submission id, poll it directly:
-
-```bash
-./ecdlp.js status <submission-id> --watch --poll-interval 10
-./ecdlp.js logs <submission-id>
-./ecdlp.js leaderboard
-```
-
-The built-in package helper enforces the official boundary before the server
-sees the package:
+The package helper enforces the official boundary before the server sees the
+package:
 
 - benchmark `shor-ecdlp-5bit`
 - validation gate `fiat_shamir_shor_ecdlp_5bit_variable_q_oracle`
 - editable path exactly `src/shor_oracle`
-- `ops.bin` byte/hash commitments
+- `src/shor_oracle/architecture.mmd` commitment
+- `ops.bin` byte/hash commitment
 - 10 KiB public note cap
 - 25 MiB source archive cap
+
+Direct script entrypoints still work:
+
+```bash
+./setup.sh
+./benchmark.sh --note "short description"
+```
+
+On Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\benchmark.ps1 -Note "short description"
+```
+
+## Submit
+
+Submissions require a contest API key. Open <https://ecdlp.ai/account>, sign in
+with GitHub, create an API key, then save it locally:
+
+```bash
+ecdlp login <api-key>
+ecdlp config
+```
+
+Submit the validated package and poll server-side validation:
+
+```bash
+ecdlp submit --watch
+```
+
+Before uploading, `submit` fetches the current track leaderboard and rejects the
+package locally unless its validated score is strictly lower than the best
+ranked score. `--source-url` is optional; use it when you have a public PR you
+want reviewers or merge automation to see.
+
+If you already have a submission id, poll it directly:
+
+```bash
+ecdlp status <submission-id> --watch --poll-interval 10
+ecdlp logs <submission-id>
+ecdlp leaderboard
+```
 
 The server reruns the trusted worker before accepting a result. After the
 trusted worker passes, the server can auto-accept the submission and arrange the
 official merge into the contest GitHub main branch with the contestant credited
 as co-author.
+
+## Documentation Map
+
+- `README.md`: canonical benchmark contract and public submission flow.
+- `CONTRIBUTING.md`: short pull-request checklist for score submissions.
+- `docs/CONTENDER_PLAYBOOK.md`: optimization strategy and implementation ideas.
+- `docs/ACCEPTING_SUBMISSIONS.md`: maintainer rerun and acceptance checklist.
+- `docs/tracks/`: compact status notes for scored and reserved track folders.
 
 ## Scope Note
 
@@ -353,4 +340,4 @@ This 5-bit Shor's ECDLP oracle contest was inspired by [https://ecdsa.fail](http
 ["Securing Elliptic Curve Cryptocurrencies against Quantum Vulnerabilities:
 Resource Estimates and Mitigations"](https://arxiv.org/pdf/2603.28846). We thank the ecdsa-fail community for pioneering this effort.
 
-5-bit ECDLP visaulzation was from [@jackylee0424](https://github.com/jackylee0424/quantum-computing-lab)
+5-bit ECDLP visualization was from [@jackylee0424](https://github.com/jackylee0424/quantum-computing-lab)
