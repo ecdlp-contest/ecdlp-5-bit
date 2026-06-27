@@ -57,6 +57,189 @@ const VALUE_FLAGS = new Set([
   "--track"
 ]);
 
+const HELP_TEXT = {
+  main: `ecdlp contest CLI
+
+Usage:
+  ecdlp <command> [options]
+  ./ecdlp.js <command> [options]
+
+Commands:
+  setup        Install or prepare local benchmark dependencies
+  run          Build and score the local oracle implementation
+  package      Create dist/submission.tar.gz and submission metadata
+  validate     Check a local package against the contest contract
+  submit       Upload a validated package to ${DEFAULT_API}
+  login        Save a contest API key locally
+  config       Show the active API endpoint and token status
+  status       Show or watch a submission status
+  logs         Print server-side validation logs
+  leaderboard  Show accepted submissions for a track
+
+Help:
+  ecdlp <command> --help
+  ./ecdlp.js <command> --help
+
+Agent guidance:
+  Read README.md and benchmark.json first. Use command-level --help before each
+  step. Contestant edits should stay under src/shor_oracle/. Do not hand-edit
+  score.json, ops.bin, results.tsv, or the trusted harness.
+
+Use repo-local build, cache, scratch, and tool paths under .workspace/ to avoid
+permission issues. Cargo is configured to build into .workspace/target.
+
+Local work does not require an API key. Submitting does: the user must sign in
+with GitHub at ${DEFAULT_API}/account, create an API key, and run ecdlp login.`,
+
+  setup: `ecdlp setup
+
+Usage:
+  ecdlp setup
+  ./ecdlp.js setup
+
+Runs benchmark.json setupCommand from the repository root.
+
+Setup and later builds should use repo-local paths under .workspace/. The
+checked-in Cargo config routes Rust build artifacts to .workspace/target.
+
+Start here when the repo has not been prepared on this machine. After setup,
+run:
+  ecdlp run --help`,
+
+  run: `ecdlp run
+
+Usage:
+  ecdlp run [--note "short note"]
+  ./ecdlp.js run [--note "short note"]
+
+Runs benchmark.json benchmarkCommand. The trusted evaluator writes:
+  ops.bin
+  score.json
+  results.tsv
+
+Build artifacts should stay under .workspace/target. Put any extra scratch
+outputs or generated experiments under .workspace/ so they remain ignored by
+git and avoid system permission issues.
+
+Use this after modifying src/shor_oracle/. A valid run must pass all 9024
+Fiat-Shamir shots and produce score.json with status "ranked".
+
+This command is local and does not require an API key.`,
+
+  package: `ecdlp package
+
+Usage:
+  ecdlp package --model MODEL [--note-file PATH] [--out dist]
+  ./ecdlp.js package --model MODEL [--note-file PATH] [--out dist]
+
+Creates:
+  dist/submission.tar.gz
+  dist/submission-note.md
+  dist/submission-metadata.json
+
+Requirements:
+  - score.json must be ranked from a trusted local run.
+  - --model is required.
+  - the note must be non-empty and at most 10 KiB after the Model prefix.
+  - editable paths must match the track boundary.
+  - src/shor_oracle/architecture.mmd must satisfy the Mermaid diagram contract.
+
+Example:
+  ecdlp package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
+
+This command is local and does not require an API key.`,
+
+  validate: `ecdlp validate
+
+Usage:
+  ecdlp validate [dist/submission-metadata.json] [--track TRACK_ID]
+  ./ecdlp.js validate [dist/submission-metadata.json] [--track TRACK_ID]
+
+Checks the local package metadata, archive, artifact hash, score formula,
+validation record, editable-path boundary, and architecture diagram commitment.
+
+Run this before submit. A package that fails local validation should not be
+uploaded.
+
+This command is local and does not require an API key.`,
+
+  submit: `ecdlp submit
+
+Usage:
+  ecdlp submit [dist/submission-metadata.json] [--source-url URL] [--watch] [--api ${DEFAULT_API}]
+  ./ecdlp.js submit [dist/submission-metadata.json] [--source-url URL] [--watch] [--api ${DEFAULT_API}]
+
+Validates the local package, checks the current leaderboard, and uploads only if
+the local score is strictly better than the best ranked score for the track.
+
+Submitting requires authentication. The user must sign in with GitHub at
+${DEFAULT_API}/account, create an API key, and run:
+  ecdlp login <api-key>
+
+Options:
+  --source-url URL       Public source or pull request URL for reviewer context
+  --watch               Poll until the server reaches a terminal state
+  --poll-interval SEC   Polling interval for --watch, default 10
+  --timeout SEC         Maximum watch time, 0 means no timeout
+  --api URL             API endpoint, default ${DEFAULT_API}
+
+Before submitting:
+  1. Run ecdlp validate.
+  2. Make sure src/shor_oracle/memory/README.md explains the approach.
+  3. Make sure src/shor_oracle/architecture.mmd matches the submitted oracle.`,
+
+  login: `ecdlp login
+
+Usage:
+  ecdlp login <api-key> [--api ${DEFAULT_API}]
+  ./ecdlp.js login <api-key> [--api ${DEFAULT_API}]
+
+Submitting requires authentication. Open ${DEFAULT_API}/account, sign in with
+GitHub, create an API key, then run this command. The key is saved in the local
+ecdlp config file.
+
+Environment alternatives:
+  ECDLP_API_TOKEN
+  ECDLP_API_KEY`,
+
+  config: `ecdlp config
+
+Usage:
+  ecdlp config [--api ${DEFAULT_API}]
+  ./ecdlp.js config [--api ${DEFAULT_API}]
+
+Shows the active API endpoint, whether a token is configured, and the config
+file path.`,
+
+  status: `ecdlp status
+
+Usage:
+  ecdlp status <submission-id> [--watch] [--poll-interval 10] [--timeout 0]
+  ./ecdlp.js status <submission-id> [--watch] [--poll-interval 10] [--timeout 0]
+
+Prints server status, rank status, score, trusted-worker state, and merge
+metadata when available. Use --watch after submit to follow validation.`,
+
+  logs: `ecdlp logs
+
+Usage:
+  ecdlp logs <submission-id>
+  ./ecdlp.js logs <submission-id>
+
+Prints server-side validation logs for a submission. Use this to distinguish
+review-pending, trusted-worker, duplicate, and failed-validation states.`,
+
+  leaderboard: `ecdlp leaderboard
+
+Usage:
+  ecdlp leaderboard [--track TRACK_ID]
+  ./ecdlp.js leaderboard [--track TRACK_ID]
+
+Shows accepted ranked submissions for the current benchmark track. The submit
+command uses the same leaderboard to reject equal-or-worse local packages before
+uploading.`
+};
+
 function hasFlag(args, name) {
   return args.includes(name);
 }
@@ -71,21 +254,12 @@ function numberFlag(args, name, fallback) {
   return value;
 }
 
-function usage(exitCode = 0) {
-  console.log(`ecdlp baseline CLI
+function isHelpFlag(value) {
+  return value === "--help" || value === "-h";
+}
 
-Usage:
-  ./ecdlp.js setup
-  ./ecdlp.js run [--note "short note"]
-  ./ecdlp.js package --model MODEL [--note-file PATH] [--out dist]
-  ./ecdlp.js validate [dist/submission-metadata.json]
-  ./ecdlp.js submit [dist/submission-metadata.json] [--source-url URL] [--watch]
-  ./ecdlp.js login <api-key> [--api ${DEFAULT_API}]
-  ./ecdlp.js config
-  ./ecdlp.js status <submission-id> [--watch] [--poll-interval 10] [--timeout 0]
-  ./ecdlp.js logs <submission-id>
-  ./ecdlp.js leaderboard [--track TRACK_ID]
-`);
+function usage(exitCode = 0, command = "main") {
+  console.log(HELP_TEXT[command] || HELP_TEXT.main);
   process.exit(exitCode);
 }
 
@@ -808,6 +982,7 @@ async function main() {
   const [command, first, ...rest] = process.argv.slice(2);
   if (!command || command === "--help" || command === "-h") usage(0);
   const args = [first, ...rest].filter(Boolean);
+  if (isHelpFlag(first)) usage(0, command);
 
   if (command === "setup") return runManifestCommand("setupCommand");
   if (command === "run") return runManifestCommand("benchmarkCommand", args);
