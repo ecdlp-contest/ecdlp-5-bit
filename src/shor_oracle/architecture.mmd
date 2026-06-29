@@ -8,7 +8,7 @@ flowchart TD
 
   Algorithm --> ABI["Preserve input registers: a, b, Q"]
   Algorithm --> Output["Write output register: R = aG + bQ"]
-  Algorithm --> Curve["Toy secp256k1-style ECC curve over F31"]
+  Algorithm --> Curve["Toy 5-bit secp256k1-style ECC curve over F31"]
   Algorithm --> Encoding["Affine point encoding: x, y, infinity flag"]
 
   Algorithm --> Baseline["Baseline table-driven decomposition"]
