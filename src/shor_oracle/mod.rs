@@ -20,15 +20,16 @@
 //! for any valid group point `Q` on `y^2 = x^3 + 7 mod 31`. The trusted
 //! evaluator chooses `Q = kG` after the circuit is built.
 //!
-//! This baseline is table-driven:
+//! This implementation is table-driven, but keeps the intermediate group value
+//! as a 5-bit scalar instead of materializing affine point scratch registers:
 //!
-//! 1. compute scratch `A = aG`
-//! 2. compute scratch `B = bQ`
-//! 3. compute output `R = A + B`
-//! 4. uncompute `B` and `A`
+//! 1. decode the valid input point `Q = kG` into a scratch scalar `k`
+//! 2. compute scratch `p = b*k mod 21`
+//! 3. table-write output `R = (a+p)G`
+//! 4. uncompute `p` and `k`
 //!
-//! It is intentionally simple and CCX-heavy so contenders can replace the
-//! tables with arithmetic.
+//! This avoids the baseline's 11-qubit `A`/`B` point scratch and 22-bit point
+//! addition table while preserving the public ABI.
 
 use crate::circuit::{Op, OperationType, QubitId, RegisterId};
 
@@ -283,77 +284,76 @@ fn emit_point_xor(
     }
 }
 
-fn emit_a_g_table(
-    builder: &mut Builder,
-    a: &[QubitId],
-    ax: &[QubitId],
-    ay: &[QubitId],
-    ainf: QubitId,
-    temps: &[QubitId],
-) {
-    for raw_a in 0..(1u16 << WIDTH) {
-        let point = scalar_mul(raw_a % GROUP_ORDER, G);
-        emit_exact_match_flag(builder, a, u32::from(raw_a), temps);
-        emit_point_xor(builder, temps[a.len() - 2], point, ax, ay, ainf);
-        unemit_exact_match_flag(builder, a, u32::from(raw_a), temps);
+fn emit_scalar_xor(builder: &mut Builder, flag: QubitId, value: u16, target: &[QubitId]) {
+    for (bit, &qubit) in target.iter().enumerate() {
+        if ((value >> bit) & 1) != 0 {
+            builder.cx(flag, qubit);
+        }
     }
 }
 
-fn emit_b_q_table(
+fn emit_q_log_table(
     builder: &mut Builder,
-    b: &[QubitId],
     qx: &[QubitId],
     qy: &[QubitId],
     qinf: QubitId,
-    bx: &[QubitId],
-    by: &[QubitId],
-    binf: QubitId,
+    k_out: &[QubitId],
     temps: &[QubitId],
 ) {
     let points = group_points();
-    let mut input = Vec::with_capacity(WIDTH + 2 * WIDTH + 1);
-    input.extend_from_slice(b);
+    let mut input = Vec::with_capacity(2 * WIDTH + 1);
     input.extend_from_slice(qx);
     input.extend_from_slice(qy);
     input.push(qinf);
 
+    for (k, &q) in points.iter().enumerate() {
+        let value = point_bits(q);
+        emit_exact_match_flag(builder, &input, value, temps);
+        emit_scalar_xor(builder, temps[input.len() - 2], k as u16, k_out);
+        unemit_exact_match_flag(builder, &input, value, temps);
+    }
+}
+
+fn emit_product_scalar_table(
+    builder: &mut Builder,
+    b: &[QubitId],
+    k: &[QubitId],
+    product_out: &[QubitId],
+    temps: &[QubitId],
+) {
+    let mut input = Vec::with_capacity(2 * WIDTH);
+    input.extend_from_slice(b);
+    input.extend_from_slice(k);
+
     for raw_b in 0..(1u16 << WIDTH) {
-        for &q in &points {
-            let value = u32::from(raw_b) | (point_bits(q) << WIDTH);
-            let point = scalar_mul(raw_b % GROUP_ORDER, q);
+        for raw_k in 0..GROUP_ORDER {
+            let value = u32::from(raw_b) | (u32::from(raw_k) << WIDTH);
+            let product = ((raw_b % GROUP_ORDER) * raw_k) % GROUP_ORDER;
             emit_exact_match_flag(builder, &input, value, temps);
-            emit_point_xor(builder, temps[input.len() - 2], point, bx, by, binf);
+            emit_scalar_xor(builder, temps[input.len() - 2], product, product_out);
             unemit_exact_match_flag(builder, &input, value, temps);
         }
     }
 }
 
-fn emit_point_add_table(
+fn emit_result_point_table(
     builder: &mut Builder,
-    ax: &[QubitId],
-    ay: &[QubitId],
-    ainf: QubitId,
-    bx: &[QubitId],
-    by: &[QubitId],
-    binf: QubitId,
+    a: &[QubitId],
+    product: &[QubitId],
     rx: &[QubitId],
     ry: &[QubitId],
     rinf: QubitId,
     temps: &[QubitId],
 ) {
-    let points = group_points();
-    let mut input = Vec::with_capacity(2 * (2 * WIDTH + 1));
-    input.extend_from_slice(ax);
-    input.extend_from_slice(ay);
-    input.push(ainf);
-    input.extend_from_slice(bx);
-    input.extend_from_slice(by);
-    input.push(binf);
+    let mut input = Vec::with_capacity(2 * WIDTH);
+    input.extend_from_slice(a);
+    input.extend_from_slice(product);
 
-    for &left in &points {
-        for &right in &points {
-            let value = point_bits(left) | (point_bits(right) << (2 * WIDTH + 1));
-            let point = point_add(left, right);
+    for raw_a in 0..(1u16 << WIDTH) {
+        for raw_product in 0..GROUP_ORDER {
+            let value = u32::from(raw_a) | (u32::from(raw_product) << WIDTH);
+            let scalar = ((raw_a % GROUP_ORDER) + raw_product) % GROUP_ORDER;
+            let point = scalar_mul(scalar, G);
             emit_exact_match_flag(builder, &input, value, temps);
             emit_point_xor(builder, temps[input.len() - 2], point, rx, ry, rinf);
             unemit_exact_match_flag(builder, &input, value, temps);
@@ -372,13 +372,9 @@ pub fn build() -> Vec<Op> {
     let ry = builder.alloc_qubits(WIDTH);
     let rinf = builder.alloc_qubit();
 
-    let ax = builder.alloc_qubits(WIDTH);
-    let ay = builder.alloc_qubits(WIDTH);
-    let ainf = builder.alloc_qubit();
-    let bx = builder.alloc_qubits(WIDTH);
-    let by = builder.alloc_qubits(WIDTH);
-    let binf = builder.alloc_qubit();
-    let temps = builder.alloc_qubits(2 * (2 * WIDTH + 1) - 1);
+    let q_log = builder.alloc_qubits(WIDTH);
+    let product = builder.alloc_qubits(WIDTH);
+    let temps = builder.alloc_qubits(2 * WIDTH);
 
     builder.declare_qubit_register(&a);
     builder.declare_qubit_register(&b);
@@ -389,23 +385,11 @@ pub fn build() -> Vec<Op> {
     builder.declare_qubit_register(&ry);
     builder.declare_qubit_register(&[rinf]);
 
-    emit_a_g_table(&mut builder, &a, &ax, &ay, ainf, &temps);
-    emit_b_q_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
-    emit_point_add_table(
-        &mut builder,
-        &ax,
-        &ay,
-        ainf,
-        &bx,
-        &by,
-        binf,
-        &rx,
-        &ry,
-        rinf,
-        &temps,
-    );
-    emit_b_q_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
-    emit_a_g_table(&mut builder, &a, &ax, &ay, ainf, &temps);
+    emit_q_log_table(&mut builder, &qx, &qy, qinf, &q_log, &temps);
+    emit_product_scalar_table(&mut builder, &b, &q_log, &product, &temps);
+    emit_result_point_table(&mut builder, &a, &product, &rx, &ry, rinf, &temps);
+    emit_product_scalar_table(&mut builder, &b, &q_log, &product, &temps);
+    emit_q_log_table(&mut builder, &qx, &qy, qinf, &q_log, &temps);
 
     builder.ops
 }
