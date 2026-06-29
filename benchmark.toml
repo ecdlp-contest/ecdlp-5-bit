@@ -3,7 +3,7 @@ schema_version = "ecdlp-primitive-ops-v1"
 editable_path = "src/shor_oracle/"
 trusted_stage = "src/bin/eval_circuit.rs"
 validation_shots = 9024
-validation_seed = "ecdlp-shor-ecdlp-5bit-variable-q-oracle-fiat-shamir-v1"
+validation_seed = "ecdlp-shor-ecdlp-5bit-variable-base-point-ops-fiat-shamir-v1"
 validator = "src/bin/eval_circuit.rs"
 score_model = "balanced-qubit-toffoli-depth-v1"
 score_note = "score = logical qubits * sqrt(rounded average executed Toffoli count * rounded average per-shot executed Toffoli depth)"

@@ -16,11 +16,20 @@ $MaxSubmissionNoteBytes = 10 * 1024
 $MaxSubmissionArchiveBytes = 25 * 1024 * 1024
 $MaxArchitectureBytes = 1024 * 1024
 $RequiredShots = 9024
-$RequiredGate = "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle"
+$RequiredGate = "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle"
 $RequiredBenchmark = "shor-ecdlp-5bit"
 $RequiredScoreModel = "balanced-qubit-toffoli-depth-v1"
 $RequiredArtifact = "ops.bin"
 $RequiredArchitecturePath = "src/shor_oracle/architecture.mmd"
+$RequiredArchitectureTarget = "Target oracle: aP + bQ plus P+Q and 2P checks"
+$RequiredValidationChecks = @(
+  "oracle correctness",
+  "point addition correctness",
+  "point doubling correctness",
+  "input preservation",
+  "phase cleanliness",
+  "ancilla cleanup"
+)
 
 function Resolve-RepoPath([string] $RepoRoot, [string] $RepoPath) {
   $relative = $RepoPath -replace "/", [System.IO.Path]::DirectorySeparatorChar
@@ -64,7 +73,7 @@ function Assert-ArchitectureDiagram([string] $RepoRoot) {
 
   $idsByLabel = @{}
   foreach ($line in $lines) {
-    foreach ($label in @("Target oracle: aG + bQ", "Algorithm", "Optimization")) {
+    foreach ($label in @($RequiredArchitectureTarget, "Algorithm", "Optimization")) {
       $pattern = "([A-Za-z][\w-]*)\s*(?:\[|\(|\{)\s*`"$([regex]::Escape($label))`"\s*(?:\]|\)|\})"
       foreach ($match in [regex]::Matches($line, $pattern)) {
         if (-not $idsByLabel.ContainsKey($label)) {
@@ -75,13 +84,13 @@ function Assert-ArchitectureDiagram([string] $RepoRoot) {
     }
   }
 
-  foreach ($label in @("Target oracle: aG + bQ", "Algorithm", "Optimization")) {
+  foreach ($label in @($RequiredArchitectureTarget, "Algorithm", "Optimization")) {
     if (-not $idsByLabel.ContainsKey($label) -or $idsByLabel[$label].Count -eq 0) {
       throw "$RequiredArchitecturePath must contain exact anchor label '$label'"
     }
   }
 
-  $targetIds = $idsByLabel["Target oracle: aG + bQ"]
+  $targetIds = $idsByLabel[$RequiredArchitectureTarget]
   $algorithmIds = $idsByLabel["Algorithm"]
   $optimizationIds = $idsByLabel["Optimization"]
   $hasAlgorithmEdge = $false
@@ -191,6 +200,11 @@ try {
   }
   if ($score.validation.shots -ne $RequiredShots -or $score.validation.gate -ne $RequiredGate) {
     throw "score.json does not show the required $RequiredShots-shot Fiat-Shamir gate"
+  }
+  foreach ($requiredCheck in $RequiredValidationChecks) {
+    if ($score.validation.checks -notcontains $requiredCheck) {
+      throw "score.json validation.checks must include '$requiredCheck'"
+    }
   }
   if ($score.score_model -ne $RequiredScoreModel) {
     throw "score.json score_model must be $RequiredScoreModel"

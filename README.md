@@ -81,8 +81,9 @@ The harness:
 1. builds an op stream by running the untrusted `src/shor_oracle`
    implementation;
 2. validates 9024 Fiat-Shamir shots against
-   `|a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>`;
-3. checks input preservation, phase cleanliness, and ancilla cleanup;
+   `|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>`;
+3. checks point addition, point doubling, input preservation, phase
+   cleanliness, and ancilla cleanup;
 4. scores the run as logical qubits times the square root of rounded average
    executed Toffoli count times rounded average per-shot executed Toffoli depth.
 
@@ -95,8 +96,8 @@ Curve:
 ```text
 E: y^2 = x^3 + 7 mod 31
 |E(F_31)| = 21
-G = (1, 15)
-example Q = 37G = 16G = (25, 15)
+sampler base point = (1, 15)
+example Q = 37B = 16B = (25, 15)
 ```
 
 Circuit ABI:
@@ -104,31 +105,45 @@ Circuit ABI:
 ```text
 register 0: scalar a              (5 qubits, preserved)
 register 1: scalar b              (5 qubits, preserved)
-register 2: input Q.x             (5 qubits, preserved)
-register 3: input Q.y             (5 qubits, preserved)
-register 4: input Q infinity flag (1 qubit, preserved)
-register 5: output R.x            (5 qubits, initially zero)
-register 6: output R.y            (5 qubits, initially zero)
-register 7: output R infinity flag (1 qubit, initially zero)
+register 2: input P.x             (5 qubits, preserved)
+register 3: input P.y             (5 qubits, preserved)
+register 4: input P infinity flag (1 qubit, preserved)
+register 5: input Q.x             (5 qubits, preserved)
+register 6: input Q.y             (5 qubits, preserved)
+register 7: input Q infinity flag (1 qubit, preserved)
+register 8: output R.x            (5 qubits, initially zero)
+register 9: output R.y            (5 qubits, initially zero)
+register 10: output R infinity flag (1 qubit, initially zero)
+register 11: output (P+Q).x       (5 qubits, initially zero)
+register 12: output (P+Q).y       (5 qubits, initially zero)
+register 13: output (P+Q) infinity flag (1 qubit, initially zero)
+register 14: output (2P).x        (5 qubits, initially zero)
+register 15: output (2P).y        (5 qubits, initially zero)
+register 16: output (2P) infinity flag (1 qubit, initially zero)
 ```
 
 The oracle must compute:
 
 ```text
-|a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>
+|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>
 ```
 
 Raw 5-bit scalar inputs are interpreted modulo the group order `21`, so the bit
 pattern `21` is treated as scalar `0`. The trusted evaluator supplies valid
-group points `Q = kG` after the circuit is built.
+group points `P = sB` and `Q = tB` after the circuit is built, where `B` is the
+sampler base point above.
 
 ### What Valid Means
 
 A run is rejected if any of the following fails:
 
 - Oracle correctness: all 9024 Fiat-Shamir shots must produce the expected
-  `aG + bQ` output point.
-- Input preservation: the `a`, `b`, and `Q` input registers must remain
+  `aP + bQ` output point.
+- Point addition correctness: the `(P+Q)` output registers must match the
+  elliptic-curve addition formula.
+- Point doubling correctness: the `(2P)` output registers must match the
+  elliptic-curve tangent formula.
+- Input preservation: the `a`, `b`, `P`, and `Q` input registers must remain
   unchanged.
 - Phase cleanliness: no leftover global phase may remain across the simulated
   shot batch.
@@ -138,33 +153,34 @@ A run is rejected if any of the following fails:
 ## Baseline
 
 The baseline in `src/shor_oracle/mod.rs` is intentionally direct: it emits a
-reversible table baseline that computes `A = aG`, `B = bQ`, then `R = A+B`
-before uncomputing scratch. This gives the contest a legitimate variable-`Q`
-Shor ECDLP oracle component before replacing the tables with prime field
-arithmetic and adding QFT/sampling machinery.
+reversible table baseline that computes `A = aP`, `B = bQ`, then `R = A+B`,
+also writing the explicit `P+Q` and `2P` check outputs before uncomputing
+scratch. This gives the contest a legitimate variable-base Shor ECDLP oracle
+component before replacing the tables with prime field arithmetic and adding
+QFT/sampling machinery.
 
 Current expected static shape:
 
 | Metric | Value |
 | --- | ---: |
-| Input/output qubits | 32 |
+| Input/output qubits | 65 |
 | Lookup scratch | 43 |
-| Logical qubits | 75 |
-| Static CCX | 59,354 |
+| Logical qubits | 108 |
+| Static CCX | 118,104 |
 
 Current full trusted eval:
 
 | Metric | Value |
 | --- | ---: |
 | Shots | 9024 OK |
-| Scored Toffoli count | 59,354 |
-| CCX | 59,354 |
+| Scored Toffoli count | 118,104 |
+| CCX | 118,104 |
 | CCZ | 0 |
-| Avg. executed Toffoli depth | 59,354 |
-| Clifford | 7,755 |
-| Qubits | 75 |
-| Ops | 103,445 |
-| Score | 4,451,550 |
+| Avg. executed Toffoli depth | 118,104 |
+| Clifford | 15,039 |
+| Qubits | 108 |
+| Ops | 205,453 |
+| Score | 12,755,232 |
 
 `Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count
 is the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir
@@ -192,7 +208,7 @@ optimization perspectives. It must be at most 1 MiB and include these exact
 top-level anchor labels:
 
 ```text
-Target oracle: aG + bQ
+Target oracle: aP + bQ plus P+Q and 2P checks
 Algorithm
 Optimization
 ```
@@ -201,7 +217,7 @@ The target anchor must branch to the two explanation anchors:
 
 ```mermaid
 flowchart TD
-  Target["Target oracle: aG + bQ"]
+  Target["Target oracle: aP + bQ plus P+Q and 2P checks"]
   Algorithm["Algorithm"]
   Optimization["Optimization"]
 
@@ -260,7 +276,7 @@ The package helper enforces the official boundary before the server sees the
 package:
 
 - benchmark `shor-ecdlp-5bit`
-- validation gate `fiat_shamir_shor_ecdlp_5bit_variable_q_oracle`
+- validation gate `fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle`
 - editable path exactly `src/shor_oracle`
 - `src/shor_oracle/architecture.mmd` commitment
 - `ops.bin` byte/hash commitment
@@ -339,4 +355,4 @@ This 5-bit Shor's ECDLP oracle contest was inspired by [https://ecdsa.fail](http
 ["Securing Elliptic Curve Cryptocurrencies against Quantum Vulnerabilities:
 Resource Estimates and Mitigations"](https://arxiv.org/pdf/2603.28846). We thank the ecdsa-fail community for pioneering this effort.
 
-5-bit ECDLP visualization was from [@jackylee0424](https://github.com/jackylee0424/quantum-computing-lab)
+5-bit ECDLP visualization was from [@jackylee0424](https://github.com/jackylee0424/quantum-computing-lab). We thank [@edi3on](https://github.com/edi3on) for testing and pointing out bugs.

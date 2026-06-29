@@ -40,8 +40,13 @@ try {
   if ($score.status -ne "ranked") {
     throw "score.json status is not ranked"
   }
-  if ($score.validation.shots -ne 9024 -or $score.validation.gate -ne "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle") {
+  if ($score.validation.shots -ne 9024 -or $score.validation.gate -ne "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle") {
     throw "score.json does not show the required 9024-shot Fiat-Shamir oracle gate"
+  }
+  foreach ($requiredCheck in @("oracle correctness", "point addition correctness", "point doubling correctness", "input preservation", "phase cleanliness", "ancilla cleanup")) {
+    if ($score.validation.checks -notcontains $requiredCheck) {
+      throw "score.json validation.checks must include '$requiredCheck'"
+    }
   }
   if ($score.score_model -ne "balanced-qubit-toffoli-depth-v1") {
     throw "score.json score_model is not balanced-qubit-toffoli-depth-v1"
@@ -60,7 +65,7 @@ Clifford: $($score.metrics.clifford)
 Qubits: $($score.metrics.qubits)
 Ops: $($score.metrics.ops)
 Artifact: $($score.artifact)
-Validation: 9024 Fiat-Shamir 5-bit Shor ECDLP oracle shots
+Validation: 9024 Fiat-Shamir 5-bit Shor ECDLP variable-base oracle and point-operation shots
 Model: $Model
 
 Co-authored-by: $SubmitterName <$SubmitterEmail>

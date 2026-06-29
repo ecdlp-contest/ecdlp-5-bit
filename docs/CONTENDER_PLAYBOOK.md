@@ -3,7 +3,7 @@
 The baseline is a direct reversible lookup for:
 
 ```text
-|a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>
+|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>
 ```
 
 A good optimization keeps the ABI unchanged while reducing CCX count, qubits, or
@@ -29,8 +29,10 @@ optimization workflow notes.
 
 ## Useful Directions
 
-- Replace the table baseline with arithmetic for scalar multiplication by `G`
-  and by the input point `Q`.
+- Replace the table baseline with arithmetic for variable-base scalar
+  multiplication by `P` and `Q`.
+- Share point-addition and point-doubling arithmetic between the oracle output
+  and the explicit `P+Q` / `2P` check outputs.
 - Use the special field modulus `31 = 2^5 - 1` to fold carries cheaply.
 - Trade a small amount of scratch for fewer repeated equality checks.
 - Preserve the input register `b`; the trusted evaluator rejects mutations.
@@ -38,5 +40,5 @@ optimization workflow notes.
 ## Validation Boundary
 
 Scanner-clean or shape-only evidence is not enough. A submission is meaningful
-only when the trusted evaluator reports all 9024 Fiat-Shamir oracle shots OK, zero phase
-garbage, and zero ancilla garbage.
+only when the trusted evaluator reports all 9024 Fiat-Shamir oracle and
+point-operation shots OK, zero phase garbage, and zero ancilla garbage.

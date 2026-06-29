@@ -1,31 +1,41 @@
-//! Contestant-editable baseline for the 5-bit Shor ECDLP variable-Q oracle.
+//! Contestant-editable baseline for the 5-bit Shor ECDLP variable-base oracle.
 //!
 //! The circuit ABI is:
 //!
 //! register 0: scalar a, 5 qubits, preserved
 //! register 1: scalar b, 5 qubits, preserved
-//! register 2: input Q.x, 5 qubits, preserved
-//! register 3: input Q.y, 5 qubits, preserved
-//! register 4: input Q infinity flag, 1 qubit, preserved
-//! register 5: output R.x, 5 qubits, initially zero
-//! register 6: output R.y, 5 qubits, initially zero
-//! register 7: output R infinity flag, 1 qubit, initially zero
+//! register 2: input P.x, 5 qubits, preserved
+//! register 3: input P.y, 5 qubits, preserved
+//! register 4: input P infinity flag, 1 qubit, preserved
+//! register 5: input Q.x, 5 qubits, preserved
+//! register 6: input Q.y, 5 qubits, preserved
+//! register 7: input Q infinity flag, 1 qubit, preserved
+//! register 8: output R.x, 5 qubits, initially zero
+//! register 9: output R.y, 5 qubits, initially zero
+//! register 10: output R infinity flag, 1 qubit, initially zero
+//! register 11: output (P+Q).x, 5 qubits, initially zero
+//! register 12: output (P+Q).y, 5 qubits, initially zero
+//! register 13: output (P+Q) infinity flag, 1 qubit, initially zero
+//! register 14: output (2P).x, 5 qubits, initially zero
+//! register 15: output (2P).y, 5 qubits, initially zero
+//! register 16: output (2P) infinity flag, 1 qubit, initially zero
 //!
 //! The oracle computes:
 //!
 //! ```text
-//! |a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>
+//! |a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>
 //! ```
 //!
-//! for any valid group point `Q` on `y^2 = x^3 + 7 mod 31`. The trusted
-//! evaluator chooses `Q = kG` after the circuit is built.
+//! for valid group points `P` and `Q` on `y^2 = x^3 + 7 mod 31`. The trusted
+//! evaluator chooses both points after the circuit is built.
 //!
 //! This baseline is table-driven:
 //!
-//! 1. compute scratch `A = aG`
+//! 1. compute scratch `A = aP`
 //! 2. compute scratch `B = bQ`
 //! 3. compute output `R = A + B`
-//! 4. uncompute `B` and `A`
+//! 4. compute the explicit point-operation checks `P+Q` and `2P`
+//! 5. uncompute `B` and `A`
 //!
 //! It is intentionally simple and CCX-heavy so contenders can replace the
 //! tables with arithmetic.
@@ -44,7 +54,7 @@ struct Point {
     infinity: bool,
 }
 
-const G: Point = Point {
+const BASE_POINT: Point = Point {
     x: 1,
     y: 15,
     infinity: false,
@@ -212,7 +222,7 @@ fn group_points() -> [Point; GROUP_ORDER as usize] {
     }; GROUP_ORDER as usize];
     let mut scalar = 1u16;
     while scalar < GROUP_ORDER {
-        points[scalar as usize] = scalar_mul(scalar, G);
+        points[scalar as usize] = scalar_mul(scalar, BASE_POINT);
         scalar += 1;
     }
     points
@@ -283,46 +293,37 @@ fn emit_point_xor(
     }
 }
 
-fn emit_a_g_table(
+fn emit_scalar_point_table(
     builder: &mut Builder,
-    a: &[QubitId],
-    ax: &[QubitId],
-    ay: &[QubitId],
-    ainf: QubitId,
-    temps: &[QubitId],
-) {
-    for raw_a in 0..(1u16 << WIDTH) {
-        let point = scalar_mul(raw_a % GROUP_ORDER, G);
-        emit_exact_match_flag(builder, a, u32::from(raw_a), temps);
-        emit_point_xor(builder, temps[a.len() - 2], point, ax, ay, ainf);
-        unemit_exact_match_flag(builder, a, u32::from(raw_a), temps);
-    }
-}
-
-fn emit_b_q_table(
-    builder: &mut Builder,
-    b: &[QubitId],
-    qx: &[QubitId],
-    qy: &[QubitId],
-    qinf: QubitId,
-    bx: &[QubitId],
-    by: &[QubitId],
-    binf: QubitId,
+    scalar: &[QubitId],
+    point_x: &[QubitId],
+    point_y: &[QubitId],
+    point_inf: QubitId,
+    out_x: &[QubitId],
+    out_y: &[QubitId],
+    out_inf: QubitId,
     temps: &[QubitId],
 ) {
     let points = group_points();
     let mut input = Vec::with_capacity(WIDTH + 2 * WIDTH + 1);
-    input.extend_from_slice(b);
-    input.extend_from_slice(qx);
-    input.extend_from_slice(qy);
-    input.push(qinf);
+    input.extend_from_slice(scalar);
+    input.extend_from_slice(point_x);
+    input.extend_from_slice(point_y);
+    input.push(point_inf);
 
-    for raw_b in 0..(1u16 << WIDTH) {
-        for &q in &points {
-            let value = u32::from(raw_b) | (point_bits(q) << WIDTH);
-            let point = scalar_mul(raw_b % GROUP_ORDER, q);
+    for raw_scalar in 0..(1u16 << WIDTH) {
+        for &input_point in &points {
+            let value = u32::from(raw_scalar) | (point_bits(input_point) << WIDTH);
+            let point = scalar_mul(raw_scalar % GROUP_ORDER, input_point);
             emit_exact_match_flag(builder, &input, value, temps);
-            emit_point_xor(builder, temps[input.len() - 2], point, bx, by, binf);
+            emit_point_xor(
+                builder,
+                temps[input.len() - 2],
+                point,
+                out_x,
+                out_y,
+                out_inf,
+            );
             unemit_exact_match_flag(builder, &input, value, temps);
         }
     }
@@ -361,16 +362,57 @@ fn emit_point_add_table(
     }
 }
 
+fn emit_point_double_table(
+    builder: &mut Builder,
+    point_x: &[QubitId],
+    point_y: &[QubitId],
+    point_inf: QubitId,
+    out_x: &[QubitId],
+    out_y: &[QubitId],
+    out_inf: QubitId,
+    temps: &[QubitId],
+) {
+    let points = group_points();
+    let mut input = Vec::with_capacity(2 * WIDTH + 1);
+    input.extend_from_slice(point_x);
+    input.extend_from_slice(point_y);
+    input.push(point_inf);
+
+    for &point in &points {
+        let value = point_bits(point);
+        let doubled = point_add(point, point);
+        emit_exact_match_flag(builder, &input, value, temps);
+        emit_point_xor(
+            builder,
+            temps[input.len() - 2],
+            doubled,
+            out_x,
+            out_y,
+            out_inf,
+        );
+        unemit_exact_match_flag(builder, &input, value, temps);
+    }
+}
+
 pub fn build() -> Vec<Op> {
     let mut builder = Builder::new();
     let a = builder.alloc_qubits(WIDTH);
     let b = builder.alloc_qubits(WIDTH);
+    let px = builder.alloc_qubits(WIDTH);
+    let py = builder.alloc_qubits(WIDTH);
+    let pinf = builder.alloc_qubit();
     let qx = builder.alloc_qubits(WIDTH);
     let qy = builder.alloc_qubits(WIDTH);
     let qinf = builder.alloc_qubit();
     let rx = builder.alloc_qubits(WIDTH);
     let ry = builder.alloc_qubits(WIDTH);
     let rinf = builder.alloc_qubit();
+    let sum_x = builder.alloc_qubits(WIDTH);
+    let sum_y = builder.alloc_qubits(WIDTH);
+    let sum_inf = builder.alloc_qubit();
+    let double_x = builder.alloc_qubits(WIDTH);
+    let double_y = builder.alloc_qubits(WIDTH);
+    let double_inf = builder.alloc_qubit();
 
     let ax = builder.alloc_qubits(WIDTH);
     let ay = builder.alloc_qubits(WIDTH);
@@ -382,15 +424,24 @@ pub fn build() -> Vec<Op> {
 
     builder.declare_qubit_register(&a);
     builder.declare_qubit_register(&b);
+    builder.declare_qubit_register(&px);
+    builder.declare_qubit_register(&py);
+    builder.declare_qubit_register(&[pinf]);
     builder.declare_qubit_register(&qx);
     builder.declare_qubit_register(&qy);
     builder.declare_qubit_register(&[qinf]);
     builder.declare_qubit_register(&rx);
     builder.declare_qubit_register(&ry);
     builder.declare_qubit_register(&[rinf]);
+    builder.declare_qubit_register(&sum_x);
+    builder.declare_qubit_register(&sum_y);
+    builder.declare_qubit_register(&[sum_inf]);
+    builder.declare_qubit_register(&double_x);
+    builder.declare_qubit_register(&double_y);
+    builder.declare_qubit_register(&[double_inf]);
 
-    emit_a_g_table(&mut builder, &a, &ax, &ay, ainf, &temps);
-    emit_b_q_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
+    emit_scalar_point_table(&mut builder, &a, &px, &py, pinf, &ax, &ay, ainf, &temps);
+    emit_scalar_point_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
     emit_point_add_table(
         &mut builder,
         &ax,
@@ -404,8 +455,31 @@ pub fn build() -> Vec<Op> {
         rinf,
         &temps,
     );
-    emit_b_q_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
-    emit_a_g_table(&mut builder, &a, &ax, &ay, ainf, &temps);
+    emit_point_add_table(
+        &mut builder,
+        &px,
+        &py,
+        pinf,
+        &qx,
+        &qy,
+        qinf,
+        &sum_x,
+        &sum_y,
+        sum_inf,
+        &temps,
+    );
+    emit_point_double_table(
+        &mut builder,
+        &px,
+        &py,
+        pinf,
+        &double_x,
+        &double_y,
+        double_inf,
+        &temps,
+    );
+    emit_scalar_point_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
+    emit_scalar_point_table(&mut builder, &a, &px, &py, pinf, &ax, &ay, ainf, &temps);
 
     builder.ops
 }

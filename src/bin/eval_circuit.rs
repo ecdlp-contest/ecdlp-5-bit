@@ -1,7 +1,7 @@
 //! Trusted evaluation stage.
 //!
 //! Reads the op stream emitted by `build_circuit` from `ops.bin`, validates the
-//! framing, simulates 9024 Fiat-Shamir 5-bit Shor ECDLP variable-Q oracle
+//! framing, simulates 9024 Fiat-Shamir 5-bit Shor ECDLP variable-base oracle
 //! shots, checks phase and ancilla cleanup, then writes `score.json` and
 //! `results.tsv`.
 
@@ -28,7 +28,7 @@ const NUM_TESTS: usize = 9024;
 const RESULTS_HEADER: &str =
     "timestamp\tcommit\ttoffoli\tccx\tccz\ttoffoli_depth\tclifford\tqubits\tops\tstatus\tnote\n";
 const SCORE_MODEL: &str = "balanced-qubit-toffoli-depth-v1";
-const VALIDATION_GATE: &str = "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle";
+const VALIDATION_GATE: &str = "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle";
 const FIELD_MODULUS: u16 = 31;
 const CURVE_A: u16 = 0;
 const GROUP_ORDER: u16 = 21;
@@ -41,7 +41,7 @@ struct Point {
     infinity: bool,
 }
 
-const G: Point = Point {
+const BASE_POINT: Point = Point {
     x: 1,
     y: 15,
     infinity: false,
@@ -130,15 +130,18 @@ fn scalar_mul(mut scalar: u16, point: Point) -> Point {
     acc
 }
 
-fn oracle_point(a: u16, b: u16, q: Point) -> Point {
+fn oracle_point(a: u16, b: u16, p: Point, q: Point) -> Point {
     curve_add(
-        scalar_mul(a % GROUP_ORDER, G),
+        scalar_mul(a % GROUP_ORDER, p),
         scalar_mul(b % GROUP_ORDER, q),
     )
 }
 
 fn assert_public_instance() {
-    assert!(scalar_mul(GROUP_ORDER, G).infinity, "G must have order 31");
+    assert!(
+        scalar_mul(GROUP_ORDER, BASE_POINT).infinity,
+        "base point must have order 21"
+    );
 }
 
 fn op_kind_from_u32(v: u32) -> Option<OperationType> {
@@ -222,7 +225,7 @@ fn load_ops(path: &str) -> Result<Vec<Op>, String> {
 
 fn fiat_shamir_seed(ops: &[Op]) -> sha3::Shake256Reader {
     let mut hasher = Shake256::default();
-    hasher.update(b"ecdlp-shor-ecdlp-5bit-variable-q-oracle-fiat-shamir-v1");
+    hasher.update(b"ecdlp-shor-ecdlp-5bit-variable-base-point-ops-fiat-shamir-v1");
     hasher.update(&(ops.len() as u64).to_le_bytes());
     for op in ops {
         hasher.update(&[op.kind as u8]);
@@ -250,6 +253,8 @@ struct SeedReport {
     tot_cliff: u64,
     n_shots: usize,
     oracle_failures: usize,
+    point_add_failures: usize,
+    point_double_failures: usize,
     input_failures: usize,
     phase_garbage_batches: usize,
     ancilla_garbage_batches: usize,
@@ -266,12 +271,18 @@ fn run_tests(
 ) -> SeedReport {
     let mut inputs = Vec::with_capacity(target_shots);
     while inputs.len() < target_shots {
-        let mut bytes = [0u8; 3];
+        let mut bytes = [0u8; 4];
         xof.read(&mut bytes);
         let a = u16::from(bytes[0]) & ((1u16 << WIDTH) - 1);
         let b = u16::from(bytes[1]) & ((1u16 << WIDTH) - 1);
-        let q_scalar = u16::from(bytes[2]) % GROUP_ORDER;
-        inputs.push((a, b, scalar_mul(q_scalar, G)));
+        let p_scalar = u16::from(bytes[2]) % GROUP_ORDER;
+        let q_scalar = u16::from(bytes[3]) % GROUP_ORDER;
+        inputs.push((
+            a,
+            b,
+            scalar_mul(p_scalar, BASE_POINT),
+            scalar_mul(q_scalar, BASE_POINT),
+        ));
     }
 
     let n = inputs.len();
@@ -279,6 +290,8 @@ fn run_tests(
     let mut ok = true;
     let mut fail_reason: Option<String> = None;
     let mut oracle_failures = 0usize;
+    let mut point_add_failures = 0usize;
+    let mut point_double_failures = 0usize;
     let mut input_failures = 0usize;
     let mut phase_garbage_batches = 0usize;
     let mut ancilla_garbage_batches = 0usize;
@@ -292,26 +305,35 @@ fn run_tests(
         sim.clear_for_shot();
         for shot in 0..bs {
             let i = batch * BATCH + shot;
-            let (a, b, q) = inputs[i];
+            let (a, b, p, q) = inputs[i];
             sim.set_register(&layout_regs[0], U256::from(a), shot);
             sim.set_register(&layout_regs[1], U256::from(b), shot);
-            sim.set_register(&layout_regs[2], U256::from(q.x), shot);
-            sim.set_register(&layout_regs[3], U256::from(q.y), shot);
-            sim.set_register(&layout_regs[4], U256::from(u16::from(q.infinity)), shot);
+            sim.set_register(&layout_regs[2], U256::from(p.x), shot);
+            sim.set_register(&layout_regs[3], U256::from(p.y), shot);
+            sim.set_register(&layout_regs[4], U256::from(u16::from(p.infinity)), shot);
+            sim.set_register(&layout_regs[5], U256::from(q.x), shot);
+            sim.set_register(&layout_regs[6], U256::from(q.y), shot);
+            sim.set_register(&layout_regs[7], U256::from(u16::from(q.infinity)), shot);
         }
 
         sim.apply_iter_masked(ops.iter(), cond_mask);
 
         for shot in 0..bs {
             let i = batch * BATCH + shot;
-            let (a_expected, b_expected, q_expected) = inputs[i];
+            let (a_expected, b_expected, p_expected, q_expected) = inputs[i];
             let a_in = sim.get_register(&layout_regs[0], shot).to::<u16>();
             let b_in = sim.get_register(&layout_regs[1], shot).to::<u16>();
-            let qx_in = sim.get_register(&layout_regs[2], shot).to::<u16>();
-            let qy_in = sim.get_register(&layout_regs[3], shot).to::<u16>();
-            let qinf_in = sim.get_register(&layout_regs[4], shot).to::<u16>() != 0;
+            let px_in = sim.get_register(&layout_regs[2], shot).to::<u16>();
+            let py_in = sim.get_register(&layout_regs[3], shot).to::<u16>();
+            let pinf_in = sim.get_register(&layout_regs[4], shot).to::<u16>() != 0;
+            let qx_in = sim.get_register(&layout_regs[5], shot).to::<u16>();
+            let qy_in = sim.get_register(&layout_regs[6], shot).to::<u16>();
+            let qinf_in = sim.get_register(&layout_regs[7], shot).to::<u16>() != 0;
             if a_in != a_expected
                 || b_in != b_expected
+                || px_in != p_expected.x
+                || py_in != p_expected.y
+                || pinf_in != p_expected.infinity
                 || qx_in != q_expected.x
                 || qy_in != q_expected.y
                 || qinf_in != q_expected.infinity
@@ -319,18 +341,23 @@ fn run_tests(
                 input_failures += 1;
                 if fail_reason.is_none() {
                     fail_reason = Some(format!(
-                        "INPUT MISMATCH shot {i}: expected a={a_expected} b={b_expected} Q=({},{},inf={}), got a={a_in} b={b_in} Q=({qx_in},{qy_in},inf={qinf_in})",
-                        q_expected.x, q_expected.y, q_expected.infinity
+                        "INPUT MISMATCH shot {i}: expected a={a_expected} b={b_expected} P=({},{},inf={}) Q=({},{},inf={}), got a={a_in} b={b_in} P=({px_in},{py_in},inf={pinf_in}) Q=({qx_in},{qy_in},inf={qinf_in})",
+                        p_expected.x,
+                        p_expected.y,
+                        p_expected.infinity,
+                        q_expected.x,
+                        q_expected.y,
+                        q_expected.infinity
                     ));
                 }
                 ok = false;
                 continue;
             }
 
-            let got_x = sim.get_register(&layout_regs[5], shot).to::<u16>();
-            let got_y = sim.get_register(&layout_regs[6], shot).to::<u16>();
-            let got_inf = sim.get_register(&layout_regs[7], shot).to::<u16>() != 0;
-            let expected = oracle_point(a_expected, b_expected, q_expected);
+            let got_x = sim.get_register(&layout_regs[8], shot).to::<u16>();
+            let got_y = sim.get_register(&layout_regs[9], shot).to::<u16>();
+            let got_inf = sim.get_register(&layout_regs[10], shot).to::<u16>() != 0;
+            let expected = oracle_point(a_expected, b_expected, p_expected, q_expected);
             let output_ok = if expected.infinity {
                 got_inf && got_x == 0 && got_y == 0
             } else {
@@ -340,13 +367,71 @@ fn run_tests(
                 oracle_failures += 1;
                 if fail_reason.is_none() {
                     fail_reason = Some(format!(
-                        "ORACLE MISMATCH shot {i}: a={a_expected} b={b_expected} Q=({},{},inf={}) got=({got_x},{got_y},inf={got_inf}) expected=({},{},inf={})",
+                        "ORACLE MISMATCH shot {i}: a={a_expected} b={b_expected} P=({},{},inf={}) Q=({},{},inf={}) got=({got_x},{got_y},inf={got_inf}) expected=({},{},inf={})",
+                        p_expected.x,
+                        p_expected.y,
+                        p_expected.infinity,
                         q_expected.x,
                         q_expected.y,
                         q_expected.infinity,
                         expected.x,
                         expected.y,
                         expected.infinity
+                    ));
+                }
+                ok = false;
+            }
+
+            let got_add_x = sim.get_register(&layout_regs[11], shot).to::<u16>();
+            let got_add_y = sim.get_register(&layout_regs[12], shot).to::<u16>();
+            let got_add_inf = sim.get_register(&layout_regs[13], shot).to::<u16>() != 0;
+            let expected_add = curve_add(p_expected, q_expected);
+            let add_ok = if expected_add.infinity {
+                got_add_inf && got_add_x == 0 && got_add_y == 0
+            } else {
+                !got_add_inf && got_add_x == expected_add.x && got_add_y == expected_add.y
+            };
+            if !add_ok {
+                point_add_failures += 1;
+                if fail_reason.is_none() {
+                    fail_reason = Some(format!(
+                        "POINT ADD MISMATCH shot {i}: P=({},{},inf={}) Q=({},{},inf={}) got=({got_add_x},{got_add_y},inf={got_add_inf}) expected=({},{},inf={})",
+                        p_expected.x,
+                        p_expected.y,
+                        p_expected.infinity,
+                        q_expected.x,
+                        q_expected.y,
+                        q_expected.infinity,
+                        expected_add.x,
+                        expected_add.y,
+                        expected_add.infinity
+                    ));
+                }
+                ok = false;
+            }
+
+            let got_double_x = sim.get_register(&layout_regs[14], shot).to::<u16>();
+            let got_double_y = sim.get_register(&layout_regs[15], shot).to::<u16>();
+            let got_double_inf = sim.get_register(&layout_regs[16], shot).to::<u16>() != 0;
+            let expected_double = curve_add(p_expected, p_expected);
+            let double_ok = if expected_double.infinity {
+                got_double_inf && got_double_x == 0 && got_double_y == 0
+            } else {
+                !got_double_inf
+                    && got_double_x == expected_double.x
+                    && got_double_y == expected_double.y
+            };
+            if !double_ok {
+                point_double_failures += 1;
+                if fail_reason.is_none() {
+                    fail_reason = Some(format!(
+                        "POINT DOUBLE MISMATCH shot {i}: P=({},{},inf={}) got=({got_double_x},{got_double_y},inf={got_double_inf}) expected=({},{},inf={})",
+                        p_expected.x,
+                        p_expected.y,
+                        p_expected.infinity,
+                        expected_double.x,
+                        expected_double.y,
+                        expected_double.infinity
                     ));
                 }
                 ok = false;
@@ -406,6 +491,8 @@ fn run_tests(
         tot_cliff: sim.stats.clifford_gates,
         n_shots: n,
         oracle_failures,
+        point_add_failures,
+        point_double_failures,
         input_failures,
         phase_garbage_batches,
         ancilla_garbage_batches,
@@ -502,7 +589,7 @@ fn write_score(
     let toffoli_depth = avg_toffoli_depth.round() as u64;
     let score = qubits as f64 * ((toffoli as f64) * (toffoli_depth as f64)).sqrt();
     let body = format!(
-        "{{\n  \"score\": {score},\n  \"score_model\": \"{SCORE_MODEL}\",\n  \"metrics\": {{\n    \"toffoli\": {toffoli},\n    \"ccx\": {ccx},\n    \"ccz\": {ccz},\n    \"toffoli_depth\": {toffoli_depth},\n    \"clifford\": {clifford},\n    \"qubits\": {qubits},\n    \"ops\": {ops_len}\n  }},\n  \"validation\": {{\n    \"shots\": {shots},\n    \"gate\": \"{VALIDATION_GATE}\",\n    \"checks\": [\"oracle correctness\", \"input preservation\", \"phase cleanliness\", \"ancilla cleanup\"]\n  }},\n  \"artifact\": \"{OPS_PATH}\",\n  \"status\": \"ranked\"\n}}\n"
+        "{{\n  \"score\": {score},\n  \"score_model\": \"{SCORE_MODEL}\",\n  \"metrics\": {{\n    \"toffoli\": {toffoli},\n    \"ccx\": {ccx},\n    \"ccz\": {ccz},\n    \"toffoli_depth\": {toffoli_depth},\n    \"clifford\": {clifford},\n    \"qubits\": {qubits},\n    \"ops\": {ops_len}\n  }},\n  \"validation\": {{\n    \"shots\": {shots},\n    \"gate\": \"{VALIDATION_GATE}\",\n    \"checks\": [\"oracle correctness\", \"point addition correctness\", \"point doubling correctness\", \"input preservation\", \"phase cleanliness\", \"ancilla cleanup\"]\n  }},\n  \"artifact\": \"{OPS_PATH}\",\n  \"status\": \"ranked\"\n}}\n"
     );
     fs::write("score.json", body).expect("write score.json");
 }
@@ -533,9 +620,12 @@ fn main() {
     let note = parse_note();
     println!("=== ecdlp_5_bit: eval_circuit (trusted stage) ===\n");
     println!("  curve      : y^2 = x^3 + 7 mod 31");
-    println!("  generator  : G=({}, {})", G.x, G.y);
-    println!("  Q input    : any valid point Q=kG");
-    println!("  oracle     : |a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>");
+    println!(
+        "  sampler    : valid points generated from ({}, {})",
+        BASE_POINT.x, BASE_POINT.y
+    );
+    println!("  P/Q inputs : valid group points selected after build");
+    println!("  oracle     : |a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>");
 
     let ops = match load_ops(OPS_PATH) {
         Ok(ops) => ops,
@@ -558,16 +648,20 @@ fn main() {
     println!("  loaded ops : {}", ops.len());
 
     let (total_qubits, num_bits, _num_regs, regs) = analyze_ops(ops.iter());
-    if regs.len() != 8 {
+    if regs.len() != 17 {
         fail_and_exit(
-            &format!("expected 8 registers, got {}", regs.len()),
+            &format!("expected 17 registers, got {}", regs.len()),
             &note,
             ops.len(),
             total_qubits,
         );
     }
     for (i, register) in regs.iter().enumerate() {
-        let expected_width = if i == 4 || i == 7 { 1 } else { WIDTH };
+        let expected_width = if matches!(i, 4 | 7 | 10 | 13 | 16) {
+            1
+        } else {
+            WIDTH
+        };
         if register.len() != expected_width {
             fail_and_exit(
                 &format!(
@@ -601,6 +695,11 @@ fn main() {
     println!("  tested shots            : {}", report.n_shots);
     println!("  input failures          : {}", report.input_failures);
     println!("  oracle failures         : {}", report.oracle_failures);
+    println!("  point-add failures      : {}", report.point_add_failures);
+    println!(
+        "  point-double failures   : {}",
+        report.point_double_failures
+    );
     println!(
         "  phase-garbage batches   : {}",
         report.phase_garbage_batches

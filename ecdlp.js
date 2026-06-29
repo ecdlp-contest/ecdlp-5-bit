@@ -16,7 +16,8 @@ const MAX_ARCHITECTURE_BYTES = 1024 * 1024;
 const REQUIRED_SHOTS = 9024;
 const SCORE_MODEL = "balanced-qubit-toffoli-depth-v1";
 const REQUIRED_ARTIFACT = "ops.bin";
-const REQUIRED_ARCHITECTURE_LABELS = ["Target oracle: aG + bQ", "Algorithm", "Optimization"];
+const SHOR_TARGET_LABEL = "Target oracle: aP + bQ plus P+Q and 2P checks";
+const REQUIRED_ARCHITECTURE_LABELS = [SHOR_TARGET_LABEL, "Algorithm", "Optimization"];
 const REQUIRED_ARCHITECTURE_PATH = "src/shor_oracle/architecture.mmd";
 
 const TRACKS = {
@@ -27,9 +28,9 @@ const TRACKS = {
     defaultNoteFile: "src/point_double/memory/README.md"
   },
   "shor-ecdlp-5bit": {
-    gate: "fiat_shamir_shor_ecdlp_5bit_variable_q_oracle",
+    gate: "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle",
     editablePaths: ["src/shor_oracle"],
-    requiredChecks: ["oracle correctness", "input preservation", "phase cleanliness", "ancilla cleanup"],
+    requiredChecks: ["oracle correctness", "point addition correctness", "point doubling correctness", "input preservation", "phase cleanliness", "ancilla cleanup"],
     defaultNoteFile: "src/shor_oracle/memory/README.md",
     architectureDiagram: REQUIRED_ARCHITECTURE_PATH
   },
@@ -486,15 +487,15 @@ function inspectMermaidArchitecture(text) {
     if (!idsByLabel.has(label)) errors.push(`diagram must contain exact anchor label '${label}'`);
   }
 
-  const targetIds = idsByLabel.get("Target oracle: aG + bQ") || new Set();
+  const targetIds = idsByLabel.get(SHOR_TARGET_LABEL) || new Set();
   const algorithmIds = idsByLabel.get("Algorithm") || new Set();
   const optimizationIds = idsByLabel.get("Optimization") || new Set();
   const hasEdge = (fromIds, toIds) => edges.some(([from, to]) => fromIds.has(from) && toIds.has(to));
   if (targetIds.size && algorithmIds.size && !hasEdge(targetIds, algorithmIds)) {
-    errors.push("Target oracle: aG + bQ must have an outgoing edge to Algorithm");
+    errors.push(`${SHOR_TARGET_LABEL} must have an outgoing edge to Algorithm`);
   }
   if (targetIds.size && optimizationIds.size && !hasEdge(targetIds, optimizationIds)) {
-    errors.push("Target oracle: aG + bQ must have an outgoing edge to Optimization");
+    errors.push(`${SHOR_TARGET_LABEL} must have an outgoing edge to Optimization`);
   }
   return errors;
 }

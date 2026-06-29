@@ -9,10 +9,11 @@ src/shor_oracle/
 This is the scored Track 1 implementation. It emits the reversible oracle:
 
 ```text
-|a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>
+|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>
 ```
 
-The trusted evaluator validates 9024 Fiat-Shamir shots and scores
+The trusted evaluator validates 9024 Fiat-Shamir shots, including explicit
+point-addition and point-doubling outputs, and scores
 `qubits * sqrt(round(toffoli) * round(toffoli_depth))`, where `toffoli_depth`
 is the average per-shot executed Toffoli depth before rounding and
 is measured from CCX/CCZ dependency layers in the emitted op stream.
