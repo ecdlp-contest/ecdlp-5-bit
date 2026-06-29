@@ -39,7 +39,8 @@ ecdlp package --help
 ecdlp validate --help
 ecdlp submit --help
 
-Then read README.md, benchmark.json, ./ecdlp.js, and
+Then read README.md, benchmark.json, ./ecdlp.js,
+src/shor_oracle/mod.rs, src/shor_oracle/architecture.mmd, and
 src/shor_oracle/memory/README.md.
 
 Goal: improve the scored oracle under src/shor_oracle/ only. Do not edit the
