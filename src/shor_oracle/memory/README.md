@@ -1,22 +1,11 @@
-# Scalar-log table oracle
+# Baseline Notes
 
-This submission replaces the baseline `A=aG`, `B=bQ`, point-add scratch flow with a scalar intermediate flow:
+This baseline emits a direct reversible lookup for the variable-Q 5-bit Shor
+ECDLP oracle:
 
 ```text
-Q = kG
-p = b*k mod 21
-R = (a+p)G = aG + bQ
+|a>|b>|Q>|0> -> |a>|b>|Q>|aG + bQ>
 ```
 
-The circuit still uses reversible exact-match tables, but it stores only two 5-bit scratch scalars (`k` and `p`) instead of two 11-bit affine points. This also replaces the 22-bit point-addition table with 10-bit scalar/product result tables.
-
-Validation result from the trusted local harness:
-
-- 9024 Fiat-Shamir shots OK
-- input preservation OK
-- phase cleanliness OK
-- ancilla cleanup OK
-- qubits: 52
-- CCX / Toffoli: 37,128
-- Toffoli depth: 37,128
-- score: 1,930,656
+It is intentionally simple. Useful improvements should reduce CCX count,
+logical qubits, or both while preserving the ABI and trusted validation gate.
