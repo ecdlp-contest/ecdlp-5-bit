@@ -3,9 +3,7 @@
 Goal: build the cheapest reversible oracle circuit for a 5-bit toy Shor ECDLP
 oracle, scored by `score = qubits * sqrt(toffoli * toffoli_depth)`, where
 `toffoli` is the rounded average executed Toffoli count and `toffoli_depth` is
-the rounded average per-shot executed Toffoli depth.
-
-This quantum circuit may be able to run on real quantum hardware.
+the rounded average per-shot executed Toffoli depth. This is an important step aiming for running the full Shor's ECDLP algorithm on quantum hardware.
 
 ## Why This Matters
 
