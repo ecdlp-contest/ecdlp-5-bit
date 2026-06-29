@@ -7,89 +7,44 @@ flowchart TD
   Target --> Optimization
 
   Algorithm --> ABI["Preserve input registers: a, b, P, Q"]
-  Algorithm --> Output["Write outputs: R = aP + bQ, S = P+Q, D = 2P"]
-  Algorithm --> Curve["Toy 5-bit secp256k1-style ECC curve over F31"]
-  Algorithm --> Encoding["Affine point encoding: x, y, infinity flag"]
+  Algorithm --> Outputs["Write outputs: R=aP+bQ, P+Q, and 2P"]
+  Algorithm --> ValidDomain["Trusted P and Q are valid order-21 group points"]
+  Algorithm --> DecodeP["Decode P as scalar p where P=pG using selected point bits"]
+  Algorithm --> DecodeQ["Decode Q as scalar q where Q=qG using selected point bits"]
+  Algorithm --> Products["Compute ap=a*p mod 21 and bq=b*q mod 21"]
+  Algorithm --> ROut["Write R=(ap+bq)G"]
+  Algorithm --> SumOut["Write P+Q=(p+q)G"]
+  Algorithm --> DoubleOut["Write 2P=(2p)G"]
+  Algorithm --> Uncompute["Uncompute bq, ap, q, and p scratch"]
 
-  Algorithm --> Baseline["Baseline table-driven decomposition"]
-  Baseline --> AP["Compute scratch A = aP"]
-  Baseline --> BQ["Compute scratch B = bQ"]
-  Baseline --> Add["Compute output R = A + B"]
-  Baseline --> CheckAdd["Compute explicit point-add output S = P+Q"]
-  Baseline --> CheckDouble["Compute explicit point-double output D = 2P"]
-  Baseline --> UncomputeB["Uncompute scratch B"]
-  Baseline --> UncomputeA["Uncompute scratch A"]
+  ValidDomain --> DecodeP
+  ValidDomain --> DecodeQ
+  DecodeP --> PLog["5-bit selector table: x0,x2,x4,y3,y4 -> p"]
+  DecodeQ --> QLog["5-bit selector table: x0,x2,x4,y3,y4 -> q"]
+  PLog --> Products
+  QLog --> Products
+  Products --> ROut
+  PLog --> SumOut
+  QLog --> SumOut
+  PLog --> DoubleOut
+  ROut --> Outputs
+  SumOut --> Outputs
+  DoubleOut --> Outputs
+  Uncompute --> Validation["Trusted validation: oracle correctness, point-add, point-double, input preservation, phase cleanliness, ancilla cleanup"]
+  ABI --> Validation
+  Outputs --> Validation
 
-  AP --> APTable["Direct a,P-to-aP lookup table"]
-  BQ --> BQTable["Direct b,Q-to-bQ lookup table"]
-  Add --> AddTable["Direct A,B-to-R point-addition lookup table"]
-  CheckAdd --> CheckAddTable["Direct P,Q-to-S point-addition lookup table"]
-  CheckDouble --> DoubleTable["Direct P-to-D point-doubling lookup table"]
-  UncomputeB --> Cleanup["Restore scratch and ancilla to zero"]
-  UncomputeA --> Cleanup
+  Optimization --> StrategyChange["Change strategy: scalar logs instead of affine A/B point scratch"]
+  Optimization --> SelectorDecode["Use five uniquely identifying bits for valid group points"]
+  Optimization --> ZeroRows["Skip scalar-product table rows that XOR zero"]
+  Optimization --> SmallerTables["Use 10-bit scalar tables instead of 16/22-bit point tables"]
+  Optimization --> Score["Score: 94 * sqrt(57292 * 57292) = 5,385,448"]
 
-  APTable --> MatchFlags["Exact-match flags built with X and CCX chains"]
-  BQTable --> MatchFlags
-  AddTable --> MatchFlags
-  CheckAddTable --> MatchFlags
-  DoubleTable --> MatchFlags
-  MatchFlags --> PointXor["Conditionally XOR selected point bits into target registers"]
-
-  Curve --> PointAddition["Point addition checked directly by S = P+Q"]
-  Curve --> PointDoubling["Point doubling checked directly by D = 2P"]
-  PointAddition --> CheckAddTable
-  PointDoubling --> DoubleTable
-
-  ABI --> Validation["Trusted validation: oracle correctness, point add, point double, input preservation, phase cleanliness, ancilla cleanup"]
-  Cleanup --> Validation
-  Output --> Validation
-
-  Algorithm --> Knobs["Structural knobs exposed to optimization"]
-  APTable --> K1["Knob: replace scalar-point lookup with double-and-add or windowing"]
-  BQTable --> K2["Knob: share variable-base scalar multiplication strategy"]
-  AddTable --> K3["Knob: replace point-addition lookup with arithmetic formula"]
-  CheckAddTable --> K4["Knob: reuse point-add arithmetic for both R and S"]
-  DoubleTable --> K5["Knob: implement doubling as a specialized formula"]
-  MatchFlags --> K6["Knob: reduce exact-match flag CCX chains"]
-  Cleanup --> K7["Knob: reschedule uncompute and ancilla reuse"]
-  Encoding --> K8["Knob: adjust point and infinity representation"]
-
-  K1 --> Optimization
-  K2 --> Optimization
-  K3 --> Optimization
-  K4 --> Optimization
-  K5 --> Optimization
-  K6 --> Optimization
-  K7 --> Optimization
-  K8 --> Optimization
-
-  Optimization --> Islands["Candidate optimization islands"]
-  Islands --> I1["Island: smaller lookup tables"]
-  Islands --> I2["Island: shared scalar multiplication"]
-  Islands --> I3["Island: lower peak qubits"]
-  Islands --> I4["Island: cheaper uncompute"]
-  Islands --> I5["Island: arithmetic instead of tables"]
-
-  Optimization --> Methods["Search and comparison methods"]
-  Methods --> M1["Manual algebraic simplification"]
-  Methods --> M2["Local rewrite trials"]
-  Methods --> M3["Benchmark-guided comparison"]
-
-  I1 --> Eval["Evaluate candidates"]
-  I2 --> Eval
-  I3 --> Eval
-  I4 --> Eval
-  I5 --> Eval
-  M1 --> Eval
-  M2 --> Eval
-  M3 --> Eval
-
-  Eval --> Score["Score: logical qubits times sqrt(avg executed Toffoli count and avg per-shot depth)"]
-  Score --> Choice["Chosen implementation"]
-  Choice --> Artifact["Generated artifacts: ops.bin and score.json"]
-  Choice --> AP
-  Choice --> BQ
-  Choice --> Add
-  Choice --> CheckAdd
-  Choice --> CheckDouble
-  Choice --> Cleanup
+  StrategyChange --> Products
+  SelectorDecode --> PLog
+  SelectorDecode --> QLog
+  ZeroRows --> Products
+  SmallerTables --> ROut
+  SmallerTables --> SumOut
+  SmallerTables --> DoubleOut
+  Score --> Validation
