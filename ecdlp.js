@@ -858,8 +858,7 @@ function nodeFetch(url, options = {}, redirects = 0) {
 }
 
 async function requestJson(url, options = {}) {
-  const request = typeof fetch === "function" ? fetch : nodeFetch;
-  const response = await request(url, {
+  const response = await nodeFetch(url, {
     ...options,
     headers: { "content-type": "application/json", ...(options.headers || {}) }
   });
