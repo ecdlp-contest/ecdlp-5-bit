@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -18,19 +18,20 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Setup benchmark
-        run: bash ./setup.sh
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+          components: rustfmt
 
       - name: Format
         run: cargo fmt --check
 
-      - name: Trusted benchmark
-        env:
-          ECDLP_EVAL_THREADS: "4"
-        run: bash ./benchmark.sh --note "ci validation"
+      - name: Check
+        run: cargo check --locked
 
-      - name: Package submission boundary
-        run: node ./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "CI"
+      - name: Unit tests
+        run: cargo test --locked --lib
 
-      - name: Validate package
-        run: node ./ecdlp.js validate
+      - name: Contract preflight
+        run: node ./ecdlp.js preflight

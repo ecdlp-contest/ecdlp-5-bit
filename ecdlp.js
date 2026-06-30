@@ -193,6 +193,7 @@ Usage:
 
 Commands:
   setup        Install or prepare local benchmark dependencies
+  preflight    Check the editable-source contract without trusted evaluation
   run          Build and score the local oracle implementation
   package      Create dist/submission.tar.gz and submission metadata
   validate     Check a local package against the contest contract
@@ -235,7 +236,21 @@ checked-in Cargo config routes Rust build artifacts to .workspace/target.
 
 Start here when the repo has not been prepared on this machine. After setup,
 run:
-  ecdlp run --help`,
+  ecdlp preflight --help`,
+
+  preflight: `ecdlp preflight
+
+Usage:
+  ecdlp preflight [--manifest benchmark.json]
+  ./ecdlp.js preflight [--manifest benchmark.json]
+
+Checks the benchmark manifest, editable-path boundary, source guards, and
+architecture diagram without building ops.bin and without running the 9024-shot
+trusted evaluator.
+
+Use this for cheap local and pull-request validation. It is not a submission
+validator; submission candidates still need ecdlp run, ecdlp package, and ecdlp
+validate after the trusted evaluator passes all 9024 Fiat-Shamir shots.`,
 
   run: `ecdlp run
 
@@ -754,8 +769,7 @@ function scoresMatch(left, right) {
   return Math.abs(left - right) <= Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 8;
 }
 
-function packageSubmission(args) {
-  const manifest = repoManifest(getFlag(args, "--manifest", "benchmark.json"));
+function assertEditableManifestContract(manifest) {
   const spec = TRACKS[manifest.name];
   if (manifest.scoreModel !== SCORE_MODEL) throw new Error(`benchmark.json scoreModel must be ${SCORE_MODEL}`);
   if (manifest.scorePath !== "score.json") throw new Error("benchmark.json scorePath must be score.json");
@@ -770,6 +784,22 @@ function packageSubmission(args) {
   }
   assertArchitectureDiagram(spec);
   assertEditableSourceBoundary();
+  return { spec, editablePaths };
+}
+
+function preflight(args) {
+  const manifest = repoManifest(getFlag(args, "--manifest", "benchmark.json"));
+  const { spec, editablePaths } = assertEditableManifestContract(manifest);
+  console.log("Preflight OK");
+  console.log(`Benchmark: ${manifest.name}`);
+  console.log(`Validation gate: ${spec.gate}`);
+  console.log(`Editable paths: ${editablePaths.join(", ")}`);
+  console.log(`Trusted shots: reserved for submission validation (${REQUIRED_SHOTS})`);
+}
+
+function packageSubmission(args) {
+  const manifest = repoManifest(getFlag(args, "--manifest", "benchmark.json"));
+  const { spec, editablePaths } = assertEditableManifestContract(manifest);
   const architecturePath = spec.architectureDiagram;
   const architectureBytes = fs.statSync(path.resolve(architecturePath)).size;
   const architectureSha256 = sha256File(path.resolve(architecturePath));
@@ -1173,6 +1203,7 @@ async function main() {
   if (isHelpFlag(first)) usage(0, command);
 
   if (command === "setup") return runManifestCommand("setupCommand");
+  if (command === "preflight") return preflight(args);
   if (command === "run") return runManifestCommand("benchmarkCommand", args);
   if (command === "package") return packageSubmission(args);
   if (command === "validate") {

@@ -19,11 +19,17 @@ Run from the repository root:
 
 ```bash
 cargo fmt --check
+./ecdlp.js preflight
 ./ecdlp.js setup
 ./ecdlp.js run --note "accepted submission"
 ./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
 ./ecdlp.js validate
 ```
+
+The trusted worker applies the same `./ecdlp.js preflight` check after
+unpacking a pending submission and before setup or the 9024-shot evaluator. A
+preflight failure should reject the submission without spending full validation
+resources.
 
 Confirm `./ecdlp.js package` and `./ecdlp.js validate` accept
 `src/shor_oracle/architecture.mmd`; the exact diagram contract is documented in

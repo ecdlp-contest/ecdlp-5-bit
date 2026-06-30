@@ -21,12 +21,14 @@ point oracle.
 
 1. Edit `src/shor_oracle/field_arithmetic.rs`, `src/shor_oracle/scalar_strategy.rs`, `src/shor_oracle/architecture.mmd`, and notes under `src/shor_oracle/memory/`.
 2. Run `cargo fmt --check`.
-3. Run `./ecdlp.js run --note "short experiment label"` or `.\benchmark.ps1`.
-4. Record score, Toffoli, qubits, ops, and the idea tested in
+3. Run `./ecdlp.js preflight` for cheap local and pull-request contract checks.
+4. Run `./ecdlp.js run --note "short experiment label"` or `.\benchmark.ps1`
+   only when validating a score or submission candidate.
+5. Record score, Toffoli, qubits, ops, and the idea tested in
    `src/shor_oracle/memory/`.
-5. Update `src/shor_oracle/architecture.mmd` with the submitted algorithm
+6. Update `src/shor_oracle/architecture.mmd` with the submitted algorithm
    shape and optimization path.
-6. Follow the package, validate, and submit flow in `README.md` only after a
+7. Follow the package, validate, and submit flow in `README.md` only after a
    trusted ranked run.
 
 ## Repo-Local Builds
@@ -66,6 +68,7 @@ for optimization workflow notes.
 
 ## Validation Boundary
 
-Scanner-clean or shape-only evidence is not enough. A submission is meaningful
-only when the trusted evaluator reports all 9024 Fiat-Shamir oracle shots OK,
-zero phase garbage, and zero ancilla garbage.
+Scanner-clean, preflight-clean, or shape-only evidence is not enough for a
+submission. A submission is meaningful only when the trusted evaluator reports
+all 9024 Fiat-Shamir oracle shots OK, zero phase garbage, and zero ancilla
+garbage.

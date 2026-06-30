@@ -21,13 +21,22 @@
 - Ops:
 - Classical/phase/ancilla:
 
-## Validation
+## Pull Request Preflight
 
 Command:
 
 ```bash
-ecdlp setup
 cargo fmt --check
+cargo check --locked
+cargo test --locked --lib
+node ./ecdlp.js preflight
+```
+
+## Submission Validation
+
+Run this only for score claims or submission candidates:
+
+```bash
 ecdlp run --note "<note>"
 node ./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "<model>"
 node ./ecdlp.js validate
@@ -55,7 +64,8 @@ Co-authored-by: Name <email@example.com>
 
 - [ ] I did not modify trusted harness files unless this PR is explicitly infrastructure work.
 - [ ] I included a short memory note explaining the approach.
-- [ ] I ran the trusted evaluator locally.
-- [ ] The submitted circuit passes the 9024-shot Fiat-Shamir oracle.
+- [ ] I ran the cheap PR preflight locally.
+- [ ] I ran the trusted evaluator locally before claiming a score or submission.
+- [ ] The submitted circuit passes the 9024-shot Fiat-Shamir oracle before submission.
 - [ ] I packaged only `benchmark.json` `editablePaths` with the package helper.
 - [ ] The public note includes model/provenance and is within the 10 KiB cap.

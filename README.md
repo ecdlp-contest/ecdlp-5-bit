@@ -37,6 +37,7 @@ Use the CLI help to learn the workflow before acting:
 
 ecdlp --help
 ecdlp setup --help
+ecdlp preflight --help
 ecdlp run --help
 ecdlp package --help
 ecdlp validate --help
@@ -70,9 +71,12 @@ Use this local loop:
    src/shor_oracle/scalar_strategy.rs, then update
    src/shor_oracle/architecture.mmd plus src/shor_oracle/memory/README.md with
    the approach and result.
-3. Run cargo fmt --check and ecdlp run --note "short description".
-4. Package with ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
-5. Run ecdlp validate before proposing submission.
+3. Run cargo fmt --check and ecdlp preflight for cheap local and PR contract
+   validation.
+4. Run ecdlp run --note "short description" only when validating a score or
+   submission candidate.
+5. Package with ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
+6. Run ecdlp validate before proposing submission.
 
 A valid submission must beat the current best score, preserve the documented
 oracle ABI, pass all 9024 trusted shots, include the Mermaid architecture
@@ -370,9 +374,16 @@ For a submission candidate:
 
 ```bash
 cargo fmt --check
+ecdlp preflight
+ecdlp run --note "short description"
 ecdlp package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
 ecdlp validate
 ```
+
+Pull requests should use the cheap preflight path (`cargo fmt --check`,
+`cargo check --locked`, `cargo test --locked --lib`, and `ecdlp preflight`).
+The full 9024-shot trusted evaluator is reserved for validating score claims
+and submission packages.
 
 The package helper enforces the official boundary before the server sees the
 package:
