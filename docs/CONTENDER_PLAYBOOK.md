@@ -1,14 +1,16 @@
 # Contender Playbook
 
-The baseline is a direct reversible lookup for the 5-bit Shor oracle plus a
-separate `F_31`, `F_13`, and `F_11` field-witness ABI:
+The baseline is a reversible arithmetic implementation of the 5-bit Shor oracle:
 
 ```text
-|a>|b>|P>|Q>|field inputs>|0> -> |a>|b>|P>|Q>|field inputs>|aP + bQ>|P+Q>|2P>|field witnesses>
+|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>
 ```
 
-A good optimization keeps the ABI unchanged while reducing CCX count, qubits, or
-both.
+A good optimization keeps the 11-register ABI unchanged while reducing CCX
+count, qubits, or both. The submitted source is expected to optimize the Shor
+oracle using in-place reversible `F_31` arithmetic kernels, not enumerated
+lookup tables. There are no hidden `F_17` or `F_19` field-kernel validation
+shots.
 
 ## Loop
 
@@ -17,33 +19,33 @@ both.
 3. Run `./ecdlp.js run --note "short experiment label"` or `.\benchmark.ps1`.
 4. Record score, Toffoli, qubits, ops, and the idea tested in
    `src/shor_oracle/memory/`.
-5. Update `src/shor_oracle/architecture.mmd` with the submitted algorithm shape
-   and optimization path.
+5. Update `src/shor_oracle/architecture.mmd` with the submitted algorithm
+   shape and optimization path.
 6. Follow the package, validate, and submit flow in `README.md` only after a
    trusted ranked run.
 
 ## Architecture Diagram
 
-Submissions must include `src/shor_oracle/architecture.mmd`. `README.md` is the
-canonical source for the exact diagram contract; use this playbook only for
-optimization workflow notes.
+Submissions must include `src/shor_oracle/architecture.mmd`. `README.md`
+is the canonical source for the exact diagram contract; use this playbook only
+for optimization workflow notes.
 
 ## Useful Directions
 
-- Replace the table baseline with arithmetic for variable-base scalar
-  multiplication by `P` and `Q`.
-- Share point-addition and point-doubling arithmetic between the oracle output
-  and the explicit `P+Q` / `2P` check outputs.
-- Replace the selector-driven `F_31`, `F_13`, and `F_11` witness tables with
-  reusable field add, subtract, multiply, inverse, and lambda-check circuits.
-- Use the special field modulus `31 = 2^5 - 1` to fold carries cheaply.
+- Reuse scratch inside the arithmetic expression network so fewer qubits remain
+  live between compute, output-copy, and uncompute.
+- Optimize the field kernels used by scalar multiplication and the final
+  `aP + bQ` point addition.
+- Specialize the `F_31` field kernels for `31 = 2^5 - 1` while keeping them
+  algorithmic rather than table-enumerated.
+- Push pebbling inside scalar multiplication instead of holding full expression
+  trees until the segment boundary.
 - Trade a small amount of scratch for fewer repeated equality checks.
-- Preserve the input registers `b`, `x1`, `y1`, `x2`, and `y2`; the trusted
-  evaluator rejects mutations.
+- Preserve the input registers `a`, `b`, `P`, and `Q`; the trusted evaluator
+  rejects mutations.
 
 ## Validation Boundary
 
 Scanner-clean or shape-only evidence is not enough. A submission is meaningful
-only when the trusted evaluator reports all 9024 Fiat-Shamir oracle and
-point-operation shots OK, all selected `F_31`, `F_13`, and `F_11` field-witness shots OK, zero phase
-garbage, and zero ancilla garbage.
+only when the trusted evaluator reports all 9024 Fiat-Shamir oracle shots OK,
+zero phase garbage, and zero ancilla garbage.

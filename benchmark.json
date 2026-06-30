@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "shor-ecdlp-5bit",
-  "description": "Optimize the balanced logical-qubit, Toffoli-count, and Toffoli-depth score for a 5-bit Shor ECDLP oracle circuit.",
+  "description": "Optimize the balanced logical-qubit, Toffoli-count, and Toffoli-depth score for a 5-bit Shor ECDLP oracle circuit built from reversible in-place F_31 field arithmetic.",
   "scoreModel": "balanced-qubit-toffoli-depth-v1",
   "scoreNote": "score = logical qubits * sqrt(rounded average executed Toffoli count * rounded average per-shot executed Toffoli depth).",
   "category": "rust",

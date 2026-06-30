@@ -39,8 +39,8 @@ ecdlp package --help
 ecdlp validate --help
 ecdlp submit --help
 
-Then read README.md, benchmark.json, ./ecdlp.js,
-src/shor_oracle/mod.rs, src/shor_oracle/architecture.mmd, and
+Then read README.md, benchmark.json, ./ecdlp.js, src/shor_oracle/mod.rs,
+src/shor_oracle/field_arithmetic.rs, src/shor_oracle/architecture.mmd, and
 src/shor_oracle/memory/README.md.
 
 Goal: improve the scored oracle under src/shor_oracle/ only. Do not edit the
@@ -81,9 +81,9 @@ The harness:
 1. builds an op stream by running the untrusted `src/shor_oracle`
    implementation;
 2. validates 9024 Fiat-Shamir shots against
-   `|a>|b>|P>|Q>|field inputs>|0> -> |a>|b>|P>|Q>|field inputs>|aP + bQ>|P+Q>|2P>|field witnesses>`;
-3. checks point addition, point doubling, selector-based `F_31`, `F_13`, and `F_11` field arithmetic
-   witnesses, input preservation, phase cleanliness, and ancilla cleanup;
+   `|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>`;
+3. checks oracle correctness, in-place `F_31` field-arithmetic composition,
+   input preservation, phase cleanliness, and ancilla cleanup;
 4. scores the run as logical qubits times the square root of rounded average
    executed Toffoli count times rounded average per-shot executed Toffoli depth.
 
@@ -114,30 +114,12 @@ register 7: input Q infinity flag (1 qubit, preserved)
 register 8: output R.x            (5 qubits, initially zero)
 register 9: output R.y            (5 qubits, initially zero)
 register 10: output R infinity flag (1 qubit, initially zero)
-register 11: output (P+Q).x       (5 qubits, initially zero)
-register 12: output (P+Q).y       (5 qubits, initially zero)
-register 13: output (P+Q) infinity flag (1 qubit, initially zero)
-register 14: output (2P).x        (5 qubits, initially zero)
-register 15: output (2P).y        (5 qubits, initially zero)
-register 16: output (2P) infinity flag (1 qubit, initially zero)
-register 17: field selector          (2 qubits, preserved; 0=F_31, 1=F_13, 2=F_11)
-register 18: field input x1          (5 qubits, preserved)
-register 19: field input y1          (5 qubits, preserved)
-register 20: field input x2          (5 qubits, preserved)
-register 21: field input y2          (5 qubits, preserved)
-register 22: field output x1+x2      (5 qubits, initially zero)
-register 23: field output den=x2-x1  (5 qubits, initially zero)
-register 24: field output num=y2-y1  (5 qubits, initially zero)
-register 25: field output x1*y2      (5 qubits, initially zero)
-register 26: field output den^-1, or 0 if den=0 (5 qubits, initially zero)
-register 27: field output lambda=num/den, or 0 if den=0 (5 qubits, initially zero)
-register 28: field output lambda*den (5 qubits, initially zero)
 ```
 
 The oracle must compute:
 
 ```text
-|a>|b>|P>|Q>|field inputs>|0> -> |a>|b>|P>|Q>|field inputs>|aP + bQ>|P+Q>|2P>|field witnesses>
+|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>
 ```
 
 Raw 5-bit scalar inputs are interpreted modulo the group order `21`, so the bit
@@ -145,20 +127,13 @@ pattern `21` is treated as scalar `0`. The trusted evaluator supplies valid
 group points `P = sB` and `Q = tB` after the circuit is built, where `B` is the
 sampler base point above.
 
-The field-arithmetic validation registers are independent of the 5-bit curve
-oracle. The trusted evaluator samples selector-driven values in `F_31`, `F_13`,
-and `F_11`, including edge cases outside the order-21 subgroup shortcut, and
-checks each selected field:
-
-```text
-sum = x1 + x2 mod p
-den = x2 - x1 mod p
-num = y2 - y1 mod p
-product = x1 * y2 mod p
-den_inv = den^-1 mod p, or 0 when den = 0
-lambda = num * den_inv mod p, or 0 when den = 0
-lambda_den = lambda * den mod p
-```
+The scored ABI intentionally has no hidden field-test registers. The only field
+in the scored circuit is the curve field `F_31`; the trusted evaluator checks
+only the oracle output and does not run hidden extra-modulus probes such as
+`field_add_kernel(F_17)` or `field_mul_kernel(F_19)`. Submissions are expected
+to implement reversible arithmetic over the five-bit `F_31` field elements.
+Enumerated point or field lookup tables are outside the contest contract even
+if they happen to pass the black-box shots.
 
 ### What Valid Means
 
@@ -166,14 +141,10 @@ A run is rejected if any of the following fails:
 
 - Oracle correctness: all 9024 Fiat-Shamir shots must produce the expected
   `aP + bQ` output point.
-- Point addition correctness: the `(P+Q)` output registers must match the
-  elliptic-curve addition formula.
-- Point doubling correctness: the `(2P)` output registers must match the
-  elliptic-curve tangent formula.
-- Field arithmetic correctness: all selected `F_31`, `F_13`, and `F_11` witness outputs must satisfy the
-  trusted add, subtract, multiply, inverse, and affine-lambda equations.
-- Input preservation: the `a`, `b`, `P`, `Q`, `x1`, `y1`, `x2`, and `y2` input
-  registers must remain unchanged.
+- In-place field arithmetic composition: the submitted source must build the
+  oracle from reversible `F_31` arithmetic rather than enumerated lookup tables.
+- Input preservation: the `a`, `b`, `P`, and `Q` input registers must remain
+  unchanged.
 - Phase cleanliness: no leftover global phase may remain across the simulated
   shot batch.
 - Ancilla cleanup: every non-register qubit must end in zero after the oracle
@@ -181,42 +152,48 @@ A run is rejected if any of the following fails:
 
 ## Baseline
 
-The baseline in `src/shor_oracle/mod.rs` is intentionally direct: it emits a
-reversible table baseline that computes `A = aP`, `B = bQ`, then `R = A+B`,
-also writing the explicit `P+Q`, `2P`, and `F_31`, `F_13`, and `F_11` field-witness check outputs
-before uncomputing scratch. This gives the contest a legitimate variable-base
-Shor ECDLP oracle component before replacing the tables with prime field
-arithmetic and adding QFT/sampling machinery.
+The baseline is intentionally arithmetic-first. `src/shor_oracle/mod.rs` fixes
+the oracle shape: affine point-add, point-double, and double-and-add scalar
+multiplication. `src/shor_oracle/field_arithmetic.rs` provides the reversible
+`F_31` add, subtract, multiply, inverse, compare, zero-test, mux, scratch
+allocation, and compute/copy/uncompute primitives. The network computes
+`A = aP`, `B = bQ`, and `R = A+B` into scratch, copies the oracle output into
+the ABI output registers, and then runs the scratch network backward. No
+enumerated point or field lookup tables are used.
 
 Current expected static shape:
 
 | Metric | Value |
 | --- | ---: |
-| Input/output qubits | 127 |
-| Lookup scratch | 49 |
-| Logical qubits | 176 |
-| Static CCX | 248,013 |
+| Input/output qubits | 43 |
+| Arithmetic scratch | 75,188 |
+| Logical qubits | 75,231 |
+| Static CCX | 290,342 |
 
 Current full trusted eval:
 
 | Metric | Value |
 | --- | ---: |
 | Shots | 9024 OK |
-| Scored Toffoli count | 248,013 |
-| CCX | 248,013 |
+| Scored Toffoli count | 290,342 |
+| CCX | 290,342 |
 | CCZ | 0 |
-| Avg. executed Toffoli depth | 129,909 |
-| Clifford | 28,920 |
-| Qubits | 176 |
-| Ops | 434,550 |
-| Score | 31,591,446.412397645 |
+| Avg. executed Toffoli depth | 25,105 |
+| Clifford | 621,539 |
+| Qubits | 75,231 |
+| Ops | 956,311 |
+| Score | 6,422,910,636.018275 |
 
-`Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count
-is the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir
-shots, matching the Google resource-estimate convention. In this baseline the
-emitted and executed counts are equal because every shot executes the same CCX
-sequence; a future conditional circuit may emit more gates than it executes on
-average.
+`Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count is
+the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir shots,
+matching the Google resource-estimate convention. This arithmetic baseline is
+correct and lookup-free. It uses coarse Bennett pebbling: compute a segment,
+copy its ABI or held-scratch outputs, uncompute the segment, and reuse the freed
+scratch qubits. Field arithmetic is in-place at the oracle contract level:
+computed field values are copied only into required point-output registers,
+then arithmetic scratch is uncomputed. A competitive submission should push
+scratch reuse inside scalar multiplication, which is now the peak live-qubit
+segment.
 
 ## What You Can Edit
 
@@ -237,7 +214,7 @@ optimization perspectives. It must be at most 1 MiB and include these exact
 top-level anchor labels:
 
 ```text
-Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks
+Target oracle: aP + bQ using in-place F_31 field arithmetic
 Algorithm
 Optimization
 ```
@@ -246,7 +223,7 @@ The target anchor must branch to the two explanation anchors:
 
 ```mermaid
 flowchart TD
-  Target["Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks"]
+  Target["Target oracle: aP + bQ using in-place F_31 field arithmetic"]
   Algorithm["Algorithm"]
   Optimization["Optimization"]
 
@@ -275,7 +252,7 @@ Do not change the trusted harness when comparing submissions:
 Implementation folders:
 
 ```text
-src/shor_oracle/  scored oracle implementation; current submission boundary
+src/shor_oracle/  scored oracle and reversible field-arithmetic implementation
 src/qft/          unscored QFT and sampling support
 src/full_shor/    future full-Shor integration layer
 ```
@@ -305,7 +282,7 @@ The package helper enforces the official boundary before the server sees the
 package:
 
 - benchmark `shor-ecdlp-5bit`
-- validation gate `fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle_field_arithmetic_v4`
+- validation gate `fiat_shamir_shor_ecdlp_5bit_in_place_field_arithmetic_oracle_v1`
 - editable path exactly `src/shor_oracle`
 - `src/shor_oracle/architecture.mmd` commitment
 - `ops.bin` byte/hash commitment

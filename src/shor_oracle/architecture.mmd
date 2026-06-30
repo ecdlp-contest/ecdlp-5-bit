@@ -1,5 +1,5 @@
 flowchart TD
-  Target["Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks"]
+  Target["Target oracle: aP + bQ using in-place F_31 field arithmetic"]
   Algorithm["Algorithm"]
   Optimization["Optimization"]
 
@@ -7,73 +7,42 @@ flowchart TD
   Target --> Optimization
 
   Algorithm --> Boundary["Submitted editable boundary: src/shor_oracle"]
-  Algorithm --> Build["build() emits a primitive op stream for ops.bin"]
-  Algorithm --> Registers["29 public registers: scalars, P, Q, outputs, selector, and field witnesses"]
+  Algorithm --> Build["Trusted src/shor_oracle::build emits the primitive op stream"]
+  Algorithm --> Registers["11 public registers: a, b, P, Q, R=aP+bQ"]
   Algorithm --> Curve["Toy curve y^2 = x^3 + 7 over F_31 with order-21 subgroup"]
   Algorithm --> Encoding["Point encoding: five x bits, five y bits, and one infinity flag"]
 
-  Registers --> Preserve["Preserved inputs: a, b, P, Q, selector, x1, y1, x2, y2"]
-  Registers --> Outputs["Written outputs: R = aP + bQ, S = P+Q, D = 2P"]
-  Registers --> FieldOutputs["Written field witnesses: sum, den, num, product, den_inv, lambda, lambda_den"]
+  Registers --> Preserve["Preserved inputs: a, b, P, Q"]
+  Registers --> Outputs["Written output: R = aP + bQ"]
 
-  Build --> Pass1["Pass 1: emit_scalar_point_table for A = aP"]
-  Pass1 --> Pass2["Pass 2: emit_scalar_point_table for B = bQ"]
-  Pass2 --> Pass3["Pass 3: emit_point_add_table for R = A+B"]
-  Pass3 --> Pass4["Pass 4: emit_point_add_table for S = P+Q"]
-  Pass4 --> Pass5["Pass 5: emit_point_double_table for D = 2P"]
-  Pass5 --> Pass6["Pass 6: repeat B table in reverse to uncompute B"]
-  Pass6 --> Pass7["Pass 7: repeat A table in reverse to uncompute A"]
-  Pass7 --> Pass8["Pass 8: emit selector-conditioned field witness tables"]
+  Build --> Segment["Segmented reversible compute, copy, uncompute"]
+  Segment --> ScalarPoint["Scalar multiplication uses double-and-add over affine point arithmetic"]
+  ScalarPoint --> ScalarA["Pebbled held point A = aP"]
+  ScalarPoint --> ScalarB["Pebbled held point B = bQ"]
+  ScalarA --> PointAdd["Affine point-add computes R = A+B"]
+  ScalarB --> PointAdd
 
-  Pass1 --> ScalarPoint["Scalar-point table enumerates raw scalar bits and valid subgroup points"]
-  Pass2 --> ScalarPoint
-  Pass6 --> ScalarPoint
-  Pass7 --> ScalarPoint
-  ScalarPoint --> ScalarClassical["Classical helper computes scalar_mul(raw_scalar mod 21, point)"]
+  PointAdd --> FieldArithmetic["Editable in-place F_31 arithmetic blocks"]
+  ScalarPoint --> FieldArithmetic
+  FieldArithmetic --> FieldAdd["add mod 31"]
+  FieldArithmetic --> FieldSub["subtract mod 31"]
+  FieldArithmetic --> FieldMul["multiply mod 31"]
+  FieldArithmetic --> FieldInv["Fermat inverse mod 31"]
+  FieldArithmetic --> FieldMux["compare, zero-test, and mux"]
 
-  Pass3 --> PointAdd["Point-add table enumerates subgroup point pairs"]
-  Pass4 --> PointAdd
-  PointAdd --> PointClassical["Classical helper computes affine point_add(left, right)"]
-  Pass5 --> PointDouble["Point-double table enumerates subgroup points"]
-  PointDouble --> DoubleClassical["Classical helper computes point_add(point, point)"]
+  Segment --> Cleanup["All non-register arithmetic scratch is restored to zero before reuse"]
+  Cleanup --> Ancilla["Ancilla cleanup is verified after public registers are ignored"]
 
-  Pass8 --> FieldAdd["field_sum = x1 + x2"]
-  Pass8 --> FieldDen["field_den = x2 - x1"]
-  Pass8 --> FieldNum["field_num = y2 - y1"]
-  Pass8 --> FieldMul["field_product = x1 * y2"]
-  Pass8 --> FieldInv["field_den_inv = den^-1 or zero"]
-  Pass8 --> FieldLambda["field_lambda = num * den_inv"]
-  Pass8 --> FieldLambdaDen["field_lambda_den = num, then zeroed when den is zero"]
-  FieldAdd --> FieldSpecs["Selector chooses F_31, F_13, or F_11"]
-  FieldDen --> FieldSpecs
-  FieldNum --> FieldSpecs
-  FieldMul --> FieldSpecs
-  FieldInv --> FieldSpecs
-  FieldLambda --> FieldSpecs
-  FieldLambdaDen --> FieldSpecs
-
-  ScalarPoint --> MatchFlag["Exact-match flag: flip zero bits, build a CCX chain, then uncompute"]
-  PointAdd --> MatchFlag
-  PointDouble --> MatchFlag
-  FieldSpecs --> MatchFlag
-  MatchFlag --> ConditionalWrite["Conditional CX writes selected point or scalar bits into the target registers"]
-
-  Pass6 --> Cleanup["A and B scratch registers are restored to zero"]
-  Pass7 --> Cleanup
-  FieldLambdaDen --> ZeroCase["Zero-denominator guard clears lambda_den when den = 0"]
-  Cleanup --> Ancilla["All exact-match temporary qubits are uncomputed"]
-  ZeroCase --> Ancilla
-
-  Optimization --> CurrentShape["Current submitted shape: direct reversible lookup baseline"]
-  CurrentShape --> StaticMetrics["Emitted ops: 434550, CCX: 248013, CCZ: 0"]
-  CurrentShape --> ExecutedMetrics["Trusted metrics: 176 qubits, 248013 Toffoli, 129909 Toffoli depth"]
-  CurrentShape --> Score["Score: 31591446.412397645"]
-  CurrentShape --> Tradeoff["Optimization choice: correctness-first table decomposition with high CCX cost"]
-  Tradeoff --> ReplaceLater["Future work should replace tables with shared arithmetic only after matching the ABI and tests"]
+  Optimization --> CurrentShape["Current submitted shape: segment-pebbled lookup-free arithmetic baseline"]
+  CurrentShape --> Contract["Contenders optimize field kernels, not the trusted point/oracle shape"]
+  Contract --> NoPublicWitness["No P+Q or 2P witness lanes are part of the scored ABI"]
+  Contract --> NoHiddenWitness["No hidden F_17 or F_19 field-kernel validation shots are run"]
+  CurrentShape --> Tradeoff["Coarse Bennett pebbling lowers persistent scratch but recomputes scalar products"]
+  Tradeoff --> ReplaceLater["Future work should pebble inside scalar multiplication and reusable field kernels"]
 
   Preserve --> Validation["Trusted validation"]
   Outputs --> Validation
-  FieldOutputs --> Validation
+  FieldArithmetic --> Validation
   Ancilla --> Validation
-  Validation --> Checks["9024 Fiat-Shamir shots, point add, point double, F_31/F_13/F_11 arithmetic, input preservation, phase cleanliness, ancilla cleanup"]
+  Validation --> Checks["9024 Fiat-Shamir oracle shots, input preservation, phase cleanliness, ancilla cleanup"]
   Validation --> Commitments["Package commitments: ops.bin hash plus this architecture diagram hash"]
