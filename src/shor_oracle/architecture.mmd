@@ -6,102 +6,74 @@ flowchart TD
   Target --> Algorithm
   Target --> Optimization
 
-  Algorithm --> ABI["Preserve input registers: a, b, P, Q"]
-  Algorithm --> Output["Write outputs: R = aP + bQ, S = P+Q, D = 2P"]
-  Algorithm --> FieldABI["Preserve field selector plus shared x1, y1, x2, y2 inputs"]
-  Algorithm --> FieldOut["Write F_31/F_13/F_11 witnesses: sum, den, num, product, inverse, lambda, lambda*den"]
-  Algorithm --> Curve["Toy 5-bit secp256k1-style ECC curve over F31"]
-  Algorithm --> Encoding["Affine point encoding: x, y, infinity flag"]
+  Algorithm --> Boundary["Submitted editable boundary: src/shor_oracle"]
+  Algorithm --> Build["build() emits a primitive op stream for ops.bin"]
+  Algorithm --> Registers["29 public registers: scalars, P, Q, outputs, selector, and field witnesses"]
+  Algorithm --> Curve["Toy curve y^2 = x^3 + 7 over F_31 with order-21 subgroup"]
+  Algorithm --> Encoding["Point encoding: five x bits, five y bits, and one infinity flag"]
 
-  Algorithm --> Baseline["Baseline table-driven decomposition"]
-  Baseline --> AP["Compute scratch A = aP"]
-  Baseline --> BQ["Compute scratch B = bQ"]
-  Baseline --> Add["Compute output R = A + B"]
-  Baseline --> CheckAdd["Compute explicit point-add output S = P+Q"]
-  Baseline --> CheckDouble["Compute explicit point-double output D = 2P"]
-  Baseline --> FieldCheck["Compute selected F_31/F_13/F_11 arithmetic witnesses"]
-  Baseline --> UncomputeB["Uncompute scratch B"]
-  Baseline --> UncomputeA["Uncompute scratch A"]
+  Registers --> Preserve["Preserved inputs: a, b, P, Q, selector, x1, y1, x2, y2"]
+  Registers --> Outputs["Written outputs: R = aP + bQ, S = P+Q, D = 2P"]
+  Registers --> FieldOutputs["Written field witnesses: sum, den, num, product, den_inv, lambda, lambda_den"]
 
-  AP --> APTable["Direct a,P-to-aP lookup table"]
-  BQ --> BQTable["Direct b,Q-to-bQ lookup table"]
-  Add --> AddTable["Direct A,B-to-R point-addition lookup table"]
-  CheckAdd --> CheckAddTable["Direct P,Q-to-S point-addition lookup table"]
-  CheckDouble --> DoubleTable["Direct P-to-D point-doubling lookup table"]
-  FieldCheck --> FieldTables["Direct selector-conditioned tables over shared field inputs"]
-  UncomputeB --> Cleanup["Restore scratch and ancilla to zero"]
-  UncomputeA --> Cleanup
+  Build --> Pass1["Pass 1: emit_scalar_point_table for A = aP"]
+  Pass1 --> Pass2["Pass 2: emit_scalar_point_table for B = bQ"]
+  Pass2 --> Pass3["Pass 3: emit_point_add_table for R = A+B"]
+  Pass3 --> Pass4["Pass 4: emit_point_add_table for S = P+Q"]
+  Pass4 --> Pass5["Pass 5: emit_point_double_table for D = 2P"]
+  Pass5 --> Pass6["Pass 6: repeat B table in reverse to uncompute B"]
+  Pass6 --> Pass7["Pass 7: repeat A table in reverse to uncompute A"]
+  Pass7 --> Pass8["Pass 8: emit selector-conditioned field witness tables"]
 
-  APTable --> MatchFlags["Exact-match flags built with X and CCX chains"]
-  BQTable --> MatchFlags
-  AddTable --> MatchFlags
-  CheckAddTable --> MatchFlags
-  DoubleTable --> MatchFlags
-  FieldTables --> MatchFlags
-  MatchFlags --> PointXor["Conditionally XOR selected point bits into target registers"]
+  Pass1 --> ScalarPoint["Scalar-point table enumerates raw scalar bits and valid subgroup points"]
+  Pass2 --> ScalarPoint
+  Pass6 --> ScalarPoint
+  Pass7 --> ScalarPoint
+  ScalarPoint --> ScalarClassical["Classical helper computes scalar_mul(raw_scalar mod 21, point)"]
 
-  Curve --> PointAddition["Point addition checked directly by S = P+Q"]
-  Curve --> PointDoubling["Point doubling checked directly by D = 2P"]
-  PointAddition --> CheckAddTable
-  PointDoubling --> DoubleTable
+  Pass3 --> PointAdd["Point-add table enumerates subgroup point pairs"]
+  Pass4 --> PointAdd
+  PointAdd --> PointClassical["Classical helper computes affine point_add(left, right)"]
+  Pass5 --> PointDouble["Point-double table enumerates subgroup points"]
+  PointDouble --> DoubleClassical["Classical helper computes point_add(point, point)"]
 
-  ABI --> Validation["Trusted validation: oracle correctness, point add, point double, F_31/F_13/F_11 field arithmetic, input preservation, phase cleanliness, ancilla cleanup"]
-  FieldABI --> Validation
-  Cleanup --> Validation
-  Output --> Validation
-  FieldOut --> Validation
+  Pass8 --> FieldAdd["field_sum = x1 + x2"]
+  Pass8 --> FieldDen["field_den = x2 - x1"]
+  Pass8 --> FieldNum["field_num = y2 - y1"]
+  Pass8 --> FieldMul["field_product = x1 * y2"]
+  Pass8 --> FieldInv["field_den_inv = den^-1 or zero"]
+  Pass8 --> FieldLambda["field_lambda = num * den_inv"]
+  Pass8 --> FieldLambdaDen["field_lambda_den = num, then zeroed when den is zero"]
+  FieldAdd --> FieldSpecs["Selector chooses F_31, F_13, or F_11"]
+  FieldDen --> FieldSpecs
+  FieldNum --> FieldSpecs
+  FieldMul --> FieldSpecs
+  FieldInv --> FieldSpecs
+  FieldLambda --> FieldSpecs
+  FieldLambdaDen --> FieldSpecs
 
-  Algorithm --> Knobs["Structural knobs exposed to optimization"]
-  APTable --> K1["Knob: replace scalar-point lookup with double-and-add or windowing"]
-  BQTable --> K2["Knob: share variable-base scalar multiplication strategy"]
-  AddTable --> K3["Knob: replace point-addition lookup with arithmetic formula"]
-  CheckAddTable --> K4["Knob: reuse point-add arithmetic for both R and S"]
-  DoubleTable --> K5["Knob: implement doubling as a specialized formula"]
-  FieldTables --> K6["Knob: replace F_31/F_13/F_11 witness lookups with reusable field arithmetic"]
-  MatchFlags --> K7["Knob: reduce exact-match flag CCX chains"]
-  Cleanup --> K8["Knob: reschedule uncompute and ancilla reuse"]
-  Encoding --> K9["Knob: adjust point and infinity representation"]
+  ScalarPoint --> MatchFlag["Exact-match flag: flip zero bits, build a CCX chain, then uncompute"]
+  PointAdd --> MatchFlag
+  PointDouble --> MatchFlag
+  FieldSpecs --> MatchFlag
+  MatchFlag --> ConditionalWrite["Conditional CX writes selected point or scalar bits into the target registers"]
 
-  K1 --> Optimization
-  K2 --> Optimization
-  K3 --> Optimization
-  K4 --> Optimization
-  K5 --> Optimization
-  K6 --> Optimization
-  K7 --> Optimization
-  K8 --> Optimization
-  K9 --> Optimization
+  Pass6 --> Cleanup["A and B scratch registers are restored to zero"]
+  Pass7 --> Cleanup
+  FieldLambdaDen --> ZeroCase["Zero-denominator guard clears lambda_den when den = 0"]
+  Cleanup --> Ancilla["All exact-match temporary qubits are uncomputed"]
+  ZeroCase --> Ancilla
 
-  Optimization --> Islands["Candidate optimization islands"]
-  Islands --> I1["Island: smaller lookup tables"]
-  Islands --> I2["Island: shared scalar multiplication"]
-  Islands --> I3["Island: lower peak qubits"]
-  Islands --> I4["Island: cheaper uncompute"]
-  Islands --> I5["Island: arithmetic instead of tables"]
-  Islands --> I6["Island: shared F_31, F_13, and F_11 add, subtract, multiply, inverse machinery"]
+  Optimization --> CurrentShape["Current submitted shape: direct reversible lookup baseline"]
+  CurrentShape --> StaticMetrics["Emitted ops: 434550, CCX: 248013, CCZ: 0"]
+  CurrentShape --> ExecutedMetrics["Trusted metrics: 176 qubits, 248013 Toffoli, 129909 Toffoli depth"]
+  CurrentShape --> Score["Score: 31591446.412397645"]
+  CurrentShape --> Tradeoff["Optimization choice: correctness-first table decomposition with high CCX cost"]
+  Tradeoff --> ReplaceLater["Future work should replace tables with shared arithmetic only after matching the ABI and tests"]
 
-  Optimization --> Methods["Search and comparison methods"]
-  Methods --> M1["Manual algebraic simplification"]
-  Methods --> M2["Local rewrite trials"]
-  Methods --> M3["Benchmark-guided comparison"]
-
-  I1 --> Eval["Evaluate candidates"]
-  I2 --> Eval
-  I3 --> Eval
-  I4 --> Eval
-  I5 --> Eval
-  I6 --> Eval
-  M1 --> Eval
-  M2 --> Eval
-  M3 --> Eval
-
-  Eval --> Score["Score: logical qubits times sqrt(avg executed Toffoli count and avg per-shot depth)"]
-  Score --> Choice["Chosen implementation"]
-  Choice --> Artifact["Generated artifacts: ops.bin and score.json"]
-  Choice --> AP
-  Choice --> BQ
-  Choice --> Add
-  Choice --> CheckAdd
-  Choice --> CheckDouble
-  Choice --> FieldCheck
-  Choice --> Cleanup
+  Preserve --> Validation["Trusted validation"]
+  Outputs --> Validation
+  FieldOutputs --> Validation
+  Ancilla --> Validation
+  Validation --> Checks["9024 Fiat-Shamir shots, point add, point double, F_31/F_13/F_11 arithmetic, input preservation, phase cleanliness, ancilla cleanup"]
+  Validation --> Commitments["Package commitments: ops.bin hash plus this architecture diagram hash"]
