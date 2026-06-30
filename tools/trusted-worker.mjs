@@ -3,9 +3,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const ROOT_DIR = path.resolve(new URL("..", import.meta.url).pathname);
+const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const API_URL = (process.env.ECDLP_API_URL || "").replace(/\/$/, "");
 const WORKER_TOKEN = process.env.ECDLP_TRUSTED_WORKER_TOKEN || "";
 const parsedLimit = Number(process.env.ECDLP_WORKER_LIMIT || 1);
@@ -57,6 +57,7 @@ function isIgnorableArchiveMetadata(entry, editablePaths) {
 }
 function removeSystemMetadataUnder(dirPath) {
   if (!fs.existsSync(dirPath)) return;
+  if (!fs.statSync(dirPath).isDirectory()) return;
   for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
     const fullPath = path.join(dirPath, entry.name);
     if (isSystemMetadataPath(entry.name)) {
