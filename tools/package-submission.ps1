@@ -22,12 +22,27 @@ $RequiredScoreModel = "balanced-qubit-toffoli-depth-v1"
 $RequiredArtifact = "ops.bin"
 $RequiredArchitecturePath = "src/shor_oracle/architecture.mmd"
 $RequiredArchitectureTarget = "Target oracle: aP + bQ using in-place F_31 field arithmetic"
+$RequiredFieldArithmeticPath = "src/shor_oracle/field_arithmetic.rs"
 $RequiredValidationChecks = @(
   "oracle correctness",
   "in-place F_31 field arithmetic composition",
   "input preservation",
   "phase cleanliness",
   "ancilla cleanup"
+)
+$FieldArithmeticBannedPatterns = @(
+  @{ Pattern = "\bQubitId\b"; Message = "must not name raw QubitId values; use opaque FieldInput/FieldOutput handles" },
+  @{ Pattern = "\bRegisterId\b"; Message = "must not observe or construct register IDs" },
+  @{ Pattern = "\bOperationType\b"; Message = "must not construct primitive operations directly" },
+  @{ Pattern = "\bOp\b"; Message = "must not construct or inspect primitive operations directly" },
+  @{ Pattern = "crate\s*::\s*circuit"; Message = "must not import the raw circuit module" },
+  @{ Pattern = "Signal\s*::\s*Qubit"; Message = "must not manufacture signals for arbitrary qubits" },
+  @{ Pattern = "\bBuilder\b"; Message = "must not access the trusted oracle builder" },
+  @{ Pattern = "\bunsafe\b"; Message = "unsafe code is not allowed in the editable field boundary" },
+  @{ Pattern = "\btransmute\b"; Message = "must not inspect opaque field handles by transmutation" },
+  @{ Pattern = "\bstatic\s+mut\b"; Message = "must not keep mutable global state across field-kernel calls" },
+  @{ Pattern = "\b(thread_local|OnceLock|LazyLock|Mutex|RwLock|Atomic[A-Za-z0-9_]*)\b"; Message = "must not use global state to key behavior by call order" },
+  @{ Pattern = "\b(include_bytes|include_str|std\s*::\s*fs|std\s*::\s*process|std\s*::\s*net|std\s*::\s*env)\b"; Message = "must not load external data or depend on process/environment state" }
 )
 
 function Resolve-RepoPath([string] $RepoRoot, [string] $RepoPath) {
@@ -118,6 +133,30 @@ function Assert-ArchitectureDiagram([string] $RepoRoot) {
   }
 }
 
+function Get-FirstMatchingLine([string] $Text, [string] $Pattern) {
+  $lines = $Text -split "\r?\n"
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -cmatch $Pattern) {
+      return $i + 1
+    }
+  }
+  return 1
+}
+
+function Assert-FieldArithmeticBoundary([string] $RepoRoot) {
+  $fieldPath = Resolve-RepoPath $RepoRoot $RequiredFieldArithmeticPath
+  if (-not (Test-Path -LiteralPath $fieldPath -PathType Leaf)) {
+    throw "$RequiredFieldArithmeticPath is required"
+  }
+  $text = [System.IO.File]::ReadAllText($fieldPath, $Utf8NoBom)
+  foreach ($entry in $FieldArithmeticBannedPatterns) {
+    if ($text -cmatch $entry.Pattern) {
+      $line = Get-FirstMatchingLine $text $entry.Pattern
+      throw "$RequiredFieldArithmeticPath`:$line`: $($entry.Message)"
+    }
+  }
+}
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
@@ -168,6 +207,7 @@ try {
     }
   }
   Assert-ArchitectureDiagram $RepoRoot
+  Assert-FieldArithmeticBoundary $RepoRoot
   $architecturePath = Resolve-RepoPath $RepoRoot $RequiredArchitecturePath
   $architectureBytes = (Get-Item -LiteralPath $architecturePath).Length
   $architectureSha256 = (Get-FileHash -LiteralPath $architecturePath -Algorithm SHA256).Hash.ToLowerInvariant()

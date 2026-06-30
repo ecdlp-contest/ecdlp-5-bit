@@ -7,7 +7,7 @@ flowchart TD
   Target --> Optimization
 
   Algorithm --> Boundary["Submitted editable boundary: field_arithmetic.rs plus diagram and memory notes"]
-  Algorithm --> Build["Trusted oracle composer src/shor_oracle/mod.rs emits the primitive op stream"]
+  Algorithm --> Build["Trusted oracle composer src/shor_oracle/mod.rs plus builder.rs emit the primitive op stream"]
   Algorithm --> Registers["11 public registers: a, b, P, Q, R=aP+bQ"]
   Algorithm --> Curve["Toy curve y^2 = x^3 + 7 over F_31 with order-21 subgroup"]
   Algorithm --> Encoding["Point encoding: five x bits, five y bits, and one infinity flag"]
@@ -22,23 +22,27 @@ flowchart TD
   ScalarA --> PointAdd["Affine point-add computes R = A+B"]
   ScalarB --> PointAdd
 
-  PointAdd --> FieldArithmetic["Editable in-place F_31 arithmetic blocks"]
-  ScalarPoint --> FieldArithmetic
+  PointAdd --> FieldFacade["Trusted opaque field-kernel facade"]
+  FieldFacade --> BuilderCircuits["Trusted builder expands field calls into reversible arithmetic circuits"]
+  BuilderCircuits --> FieldArithmetic["Editable in-place F_31 arithmetic calls"]
+  ScalarPoint --> FieldFacade
   FieldArithmetic --> FieldAdd["add mod 31"]
   FieldArithmetic --> FieldSub["subtract mod 31"]
-  FieldArithmetic --> FieldMul["multiply mod 31"]
-  FieldArithmetic --> FieldInv["inverse mod 31, with inverse(0)=0 for invalid branches"]
+  FieldArithmetic --> FieldMul["multiply mod 31 by controlled cyclic shifts and modular accumulators"]
+  FieldArithmetic --> FieldInv["inverse mod 31 by Fermat exponentiation, with inverse(0)=0 for invalid branches"]
   FieldArithmetic --> FieldMux["compare, zero-test, and mux"]
 
   Segment --> Cleanup["All non-register arithmetic scratch is restored to zero before reuse"]
   Cleanup --> Ancilla["Ancilla cleanup is verified after public registers are ignored"]
 
   Optimization --> CurrentShape["Current submitted shape: bounded-register reversible arithmetic baseline"]
-  CurrentShape --> Contract["Contenders optimize field kernels; trusted mod.rs freezes point and oracle shape"]
+  CurrentShape --> Contract["Contenders optimize field kernels; trusted mod.rs and builder.rs freeze point and oracle shape"]
   Contract --> NoPublicWitness["No P+Q or 2P witness lanes are part of the scored ABI"]
   Contract --> NoHiddenWitness["No hidden F_17 or F_19 field-kernel validation shots are run"]
-  Contract --> NoLookupTables["Submissions shall build reversible in-place F_31 arithmetic instead of point or field lookup tables"]
-  CurrentShape --> Tradeoff["Bounded registers keep logical qubits under 210 while recomputing reversible segments"]
+  Contract --> NoLookupTables["Submissions shall not build P/Q subgroup-index tables, direct aP+bQ tables, or replacement point-oracle tables"]
+  Contract --> NoFieldTruthTables["Trusted baseline field kernels avoid enumerated truth-table synthesis"]
+  Contract --> NoRawBuilder["field_arithmetic.rs cannot access raw qubits, raw ops, or builder segment boundaries"]
+  CurrentShape --> Tradeoff["Explicit arithmetic removes table-derived kernels while increasing logical qubits and gates"]
   Tradeoff --> ReplaceLater["Future work should reduce field-kernel gates without expanding live scratch"]
 
   Preserve --> Validation["Trusted validation"]

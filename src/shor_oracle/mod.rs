@@ -7,9 +7,10 @@
 use crate::circuit::{Op, QubitId};
 use crate::ops_io::{OpSink, VecOpSink};
 
+mod builder;
 mod field_arithmetic;
 
-use field_arithmetic::{const_bits, Builder, Signal, FIELD_MODULUS, WIDTH};
+use builder::{const_bits, Builder, Signal, FIELD_MODULUS, WIDTH};
 
 #[derive(Clone)]
 struct PointValue {
@@ -26,14 +27,14 @@ struct PointRegister {
 }
 
 fn qubit_signals(qubits: &[QubitId]) -> Vec<Signal> {
-    qubits.iter().copied().map(Signal::Qubit).collect()
+    qubits.iter().copied().map(Signal::qubit).collect()
 }
 
 fn point_signals(point: &PointRegister) -> PointValue {
     PointValue {
         x: qubit_signals(&point.x),
         y: qubit_signals(&point.y),
-        inf: Signal::Qubit(point.inf),
+        inf: Signal::qubit(point.inf),
     }
 }
 
@@ -41,7 +42,7 @@ fn point_const(x: u16, y: u16, inf: bool) -> PointValue {
     PointValue {
         x: const_bits(x, WIDTH),
         y: const_bits(y, WIDTH),
-        inf: Signal::Const(inf),
+        inf: Signal::constant(inf),
     }
 }
 
@@ -101,7 +102,7 @@ fn swap_points(builder: &mut Builder<impl OpSink>, left: &PointRegister, right: 
 
 fn same_point_signal(builder: &mut Builder<impl OpSink>, point: &PointRegister) -> Signal {
     let y_zero = builder.is_zero(&qubit_signals(&point.y));
-    builder.or(Signal::Qubit(point.inf), y_zero)
+    builder.or(Signal::qubit(point.inf), y_zero)
 }
 
 fn add_same_point_signal(
@@ -112,8 +113,8 @@ fn add_same_point_signal(
     let same_x = builder.eq_bits(&qubit_signals(&left.x), &qubit_signals(&right.x));
     let same_y = builder.eq_bits(&qubit_signals(&left.y), &qubit_signals(&right.y));
     let same_xy = builder.and(same_x, same_y);
-    let not_left_inf = builder.not(Signal::Qubit(left.inf));
-    let not_right_inf = builder.not(Signal::Qubit(right.inf));
+    let not_left_inf = builder.not(Signal::qubit(left.inf));
+    let not_right_inf = builder.not(Signal::qubit(right.inf));
     let neither_inf = builder.and(not_left_inf, not_right_inf);
     builder.and(same_xy, neither_inf)
 }
@@ -127,8 +128,8 @@ fn inverse_case_signal(
     let same_x = builder.eq_bits(&qubit_signals(&left.x), &qubit_signals(&right.x));
     let y_sum_zero = builder.is_zero(&qubit_signals(y_sum));
     let same_x_and_neg_y = builder.and(same_x, y_sum_zero);
-    let not_left_inf = builder.not(Signal::Qubit(left.inf));
-    let not_right_inf = builder.not(Signal::Qubit(right.inf));
+    let not_left_inf = builder.not(Signal::qubit(left.inf));
+    let not_right_inf = builder.not(Signal::qubit(right.inf));
     let neither_inf = builder.and(not_left_inf, not_right_inf);
     builder.and(same_x_and_neg_y, neither_inf)
 }
@@ -167,7 +168,7 @@ fn point_double_xor(
     let formula = PointValue {
         x: qubit_signals(&x3),
         y: qubit_signals(&y3),
-        inf: Signal::Const(false),
+        inf: Signal::constant(false),
     };
     let invalid_double = same_point_signal(builder, point);
     let selected = mux_point(builder, invalid_double, &point_const(0, 0, true), &formula);
@@ -247,19 +248,19 @@ fn point_add_xor(
     let formula = PointValue {
         x: qubit_signals(&x3),
         y: qubit_signals(&y3),
-        inf: Signal::Const(false),
+        inf: Signal::constant(false),
     };
     let inverse_case = inverse_case_signal(builder, left, right, &y_sum);
     let after_inverse = mux_point(builder, inverse_case, &point_const(0, 0, true), &formula);
     let after_right_inf = mux_point(
         builder,
-        Signal::Qubit(right.inf),
+        Signal::qubit(right.inf),
         &point_signals(left),
         &after_inverse,
     );
     let selected = mux_point(
         builder,
-        Signal::Qubit(left.inf),
+        Signal::qubit(left.inf),
         &point_signals(right),
         &after_right_inf,
     );
@@ -298,7 +299,7 @@ fn point_neg_xor(builder: &mut Builder<impl OpSink>, point: &PointRegister, out:
     );
     builder.finish_segment(
         vec![(neg_y, out.y.clone())],
-        vec![(Signal::Qubit(point.inf), out.inf)],
+        vec![(Signal::qubit(point.inf), out.inf)],
     );
 }
 
@@ -336,7 +337,7 @@ fn xor_selected_point(
 ) {
     let selected = mux_point(
         builder,
-        Signal::Qubit(selector),
+        Signal::qubit(selector),
         &point_signals(when_true),
         &point_signals(when_false),
     );

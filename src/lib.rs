@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[allow(dead_code)]
 pub mod circuit;
 pub mod full_shor;

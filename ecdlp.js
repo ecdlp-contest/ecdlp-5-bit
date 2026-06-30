@@ -19,6 +19,57 @@ const REQUIRED_ARTIFACT = "ops.bin";
 const SHOR_TARGET_LABEL = "Target oracle: aP + bQ using in-place F_31 field arithmetic";
 const REQUIRED_ARCHITECTURE_LABELS = [SHOR_TARGET_LABEL, "Algorithm", "Optimization"];
 const REQUIRED_ARCHITECTURE_PATH = "src/shor_oracle/architecture.mmd";
+const FIELD_ARITHMETIC_PATH = "src/shor_oracle/field_arithmetic.rs";
+const FIELD_ARITHMETIC_BANNED_PATTERNS = [
+  {
+    pattern: /\bQubitId\b/u,
+    message: "must not name raw QubitId values; use opaque FieldInput/FieldOutput handles"
+  },
+  {
+    pattern: /\bRegisterId\b/u,
+    message: "must not observe or construct register IDs"
+  },
+  {
+    pattern: /\bOperationType\b/u,
+    message: "must not construct primitive operations directly"
+  },
+  {
+    pattern: /\bOp\b/u,
+    message: "must not construct or inspect primitive operations directly"
+  },
+  {
+    pattern: /crate\s*::\s*circuit/u,
+    message: "must not import the raw circuit module"
+  },
+  {
+    pattern: /Signal\s*::\s*Qubit/u,
+    message: "must not manufacture signals for arbitrary qubits"
+  },
+  {
+    pattern: /\bBuilder\b/u,
+    message: "must not access the trusted oracle builder"
+  },
+  {
+    pattern: /\bunsafe\b/u,
+    message: "unsafe code is not allowed in the editable field boundary"
+  },
+  {
+    pattern: /\btransmute\b/u,
+    message: "must not inspect opaque field handles by transmutation"
+  },
+  {
+    pattern: /\bstatic\s+mut\b/u,
+    message: "must not keep mutable global state across field-kernel calls"
+  },
+  {
+    pattern: /\b(thread_local|OnceLock|LazyLock|Mutex|RwLock|Atomic[A-Za-z0-9_]*)\b/u,
+    message: "must not use global state to key behavior by call order"
+  },
+  {
+    pattern: /\b(include_bytes|include_str|std\s*::\s*fs|std\s*::\s*process|std\s*::\s*net|std\s*::\s*env)\b/u,
+    message: "must not load external data or depend on process/environment state"
+  }
+];
 
 const TRACKS = {
   "point-double-secp256k1-v1": {
@@ -85,6 +136,8 @@ Agent guidance:
   Read README.md and benchmark.json first. Use command-level --help before each
   step. Contestant code edits should stay in src/shor_oracle/field_arithmetic.rs.
   Keep notes under src/shor_oracle/memory/ and update src/shor_oracle/architecture.mmd.
+  The trusted builder owns raw qubits, primitive ops, register allocation, and
+  segment boundaries.
   Do not hand-edit score.json, ops.bin, results.tsv, or the trusted harness.
 
 Use repo-local build, cache, scratch, and tool paths under .workspace/ to avoid
@@ -561,6 +614,40 @@ function assertArchitectureDiagram(spec) {
   if (errors.length > 0) throw new Error(errors[0]);
 }
 
+function firstLineMatching(text, pattern) {
+  const lines = text.split(/\r?\n/u);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (pattern.test(lines[i])) {
+      pattern.lastIndex = 0;
+      return i + 1;
+    }
+    pattern.lastIndex = 0;
+  }
+  return 1;
+}
+
+function fieldArithmeticSourceErrors() {
+  const absolutePath = path.resolve(FIELD_ARITHMETIC_PATH);
+  if (!fs.existsSync(absolutePath)) return [`${FIELD_ARITHMETIC_PATH} is required`];
+  const stat = fs.statSync(absolutePath);
+  if (!stat.isFile()) return [`${FIELD_ARITHMETIC_PATH} must be a file`];
+  const text = fs.readFileSync(absolutePath, "utf8");
+  const errors = [];
+  for (const { pattern, message } of FIELD_ARITHMETIC_BANNED_PATTERNS) {
+    if (pattern.test(text)) {
+      const line = firstLineMatching(text, pattern);
+      errors.push(`${FIELD_ARITHMETIC_PATH}:${line}: ${message}`);
+      pattern.lastIndex = 0;
+    }
+  }
+  return errors;
+}
+
+function assertFieldArithmeticSourceBoundary() {
+  const errors = fieldArithmeticSourceErrors();
+  if (errors.length > 0) throw new Error(errors[0]);
+}
+
 function utf8Bytes(text) {
   return Buffer.byteLength(text, "utf8");
 }
@@ -590,6 +677,7 @@ function packageSubmission(args) {
     if (!fs.existsSync(path.resolve(editablePath))) throw new Error(`editable path does not exist: ${editablePath}`);
   }
   assertArchitectureDiagram(spec);
+  assertFieldArithmeticSourceBoundary();
   const architecturePath = spec.architectureDiagram;
   const architectureBytes = fs.statSync(path.resolve(architecturePath)).size;
   const architectureSha256 = sha256File(path.resolve(architecturePath));
@@ -737,6 +825,9 @@ function validatePackage(metadata, options = {}) {
 
   for (const message of architectureDiagramErrors(spec, options.metadataPath || null, metadata)) {
     error("PACKAGE_ARCHITECTURE_DIAGRAM", message);
+  }
+  for (const message of fieldArithmeticSourceErrors()) {
+    error("FIELD_ARITHMETIC_BOUNDARY", message);
   }
   for (const message of archivePackageErrors(spec, options.metadataPath || null, metadata)) {
     error("PACKAGE_ARCHIVE", message);

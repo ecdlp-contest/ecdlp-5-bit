@@ -8,10 +8,11 @@ The baseline is a reversible arithmetic implementation of the 5-bit Shor oracle:
 
 A good optimization keeps the 11-register ABI unchanged while reducing CCX
 count, qubits, or both. The trusted `src/shor_oracle/mod.rs` composer freezes
-the point and scalar-multiplication shape; submitted code changes should
-optimize `src/shor_oracle/field_arithmetic.rs` using in-place reversible
-`F_31` arithmetic kernels, not enumerated lookup tables. There are no hidden
-`F_17` or `F_19` field-kernel validation shots.
+the point and scalar-multiplication shape, and trusted `src/shor_oracle/builder.rs`
+owns register allocation, segment boundaries, and primitive op emission.
+Submitted code changes should optimize `src/shor_oracle/field_arithmetic.rs`
+through the opaque field-kernel facade, not by building P/Q subgroup-index
+tables, direct `aP+bQ` tables, or an enumerated point oracle.
 
 ## Loop
 
@@ -25,6 +26,23 @@ optimize `src/shor_oracle/field_arithmetic.rs` using in-place reversible
 6. Follow the package, validate, and submit flow in `README.md` only after a
    trusted ranked run.
 
+## Repo-Local Builds
+
+Keep build output and temporary files under `.workspace/` to avoid Windows
+permission or application-control issues. This repo already configures Cargo to
+use `.workspace/target`; if you invoke Cargo directly, make the target and temp
+paths explicit:
+
+```powershell
+New-Item -ItemType Directory -Force .workspace\target, .workspace\tmp | Out-Null
+$env:CARGO_TARGET_DIR = (Resolve-Path .workspace\target).Path
+$env:TMP = (Resolve-Path .workspace\tmp).Path
+$env:TEMP = (Resolve-Path .workspace\tmp).Path
+cargo build --locked --release --bin build_circuit --bin eval_circuit
+```
+
+Use the generated binaries from `.workspace\target\release\`.
+
 ## Architecture Diagram
 
 Submissions must include `src/shor_oracle/architecture.mmd`. `README.md`
@@ -33,14 +51,10 @@ for optimization workflow notes.
 
 ## Useful Directions
 
-- Reuse scratch inside field kernels so fewer qubits remain live between
-  compute, output-copy, and uncompute.
-- Optimize the field kernels used by scalar multiplication and the final
-  `aP + bQ` point addition.
+- Use the opaque field emitter to reduce gates in the field kernels called by
+  scalar multiplication and the final `aP + bQ` point addition.
 - Specialize the `F_31` field kernels for `31 = 2^5 - 1` while keeping them
-  algorithmic rather than table-enumerated.
-- Push pebbling inside scalar multiplication instead of holding full expression
-  trees until the segment boundary.
+  scoped to their field operands rather than keyed by public point registers.
 - Trade a small amount of scratch for fewer repeated equality checks.
 - Preserve the input registers `a`, `b`, `P`, and `Q`; the trusted evaluator
   rejects mutations.

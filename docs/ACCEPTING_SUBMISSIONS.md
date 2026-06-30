@@ -28,6 +28,12 @@ Confirm `./ecdlp.js package` and `./ecdlp.js validate` accept
 `src/shor_oracle/architecture.mmd`; the exact diagram contract is documented in
 `README.md`.
 
+Confirm validation does not report `FIELD_ARITHMETIC_BOUNDARY`. The editable
+source must not import raw qubits, raw circuit ops, the trusted builder, unsafe
+code, mutable global state, external data, or process/environment state. This is
+the mechanical guard against P/Q subgroup-index tables, direct `aP+bQ` tables,
+and replacement point-oracle tables.
+
 Confirm `score.json` contains:
 
 ```text

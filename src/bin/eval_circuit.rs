@@ -6,7 +6,7 @@
 //! `results.tsv`.
 
 use alloy_primitives::U256;
-use ecdlp_5_bit::circuit::{analyze_ops, Op, QubitId, QubitOrBit};
+use ecdlp_5_bit::circuit::{analyze_ops, Op, OperationType, QubitId, QubitOrBit};
 use ecdlp_5_bit::ops_io::load_ops;
 use ecdlp_5_bit::sim::Simulator;
 use sha3::{
@@ -30,6 +30,7 @@ const CURVE_A: u16 = 0;
 const GROUP_ORDER: u16 = 21;
 const WIDTH: usize = 5;
 const REGISTER_COUNT: usize = 11;
+const SHOTS_PER_BATCH: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Point {
@@ -185,6 +186,246 @@ struct SeedReport {
     fail_reason: Option<String>,
 }
 
+fn empty_report() -> SeedReport {
+    SeedReport {
+        ok: true,
+        avg_cliff: 0.0,
+        avg_tof: 0.0,
+        avg_toffoli_depth: 0.0,
+        avg_ccx: 0.0,
+        avg_ccz: 0.0,
+        tot_tof: 0,
+        tot_toffoli_depth: 0,
+        tot_ccx: 0,
+        tot_ccz: 0,
+        tot_cliff: 0,
+        n_shots: 0,
+        oracle_failures: 0,
+        input_failures: 0,
+        phase_garbage_batches: 0,
+        ancilla_garbage_batches: 0,
+        fail_reason: None,
+    }
+}
+
+fn finalize_report(mut report: SeedReport) -> SeedReport {
+    let denom = report.n_shots.max(1) as f64;
+    report.avg_cliff = report.tot_cliff as f64 / denom;
+    report.avg_tof = report.tot_tof as f64 / denom;
+    report.avg_toffoli_depth = report.tot_toffoli_depth as f64 / denom;
+    report.avg_ccx = report.tot_ccx as f64 / denom;
+    report.avg_ccz = report.tot_ccz as f64 / denom;
+    report
+}
+
+fn merge_reports(reports: Vec<SeedReport>) -> SeedReport {
+    let mut merged = empty_report();
+    for report in reports {
+        merged.ok &= report.ok;
+        merged.tot_tof += report.tot_tof;
+        merged.tot_toffoli_depth += report.tot_toffoli_depth;
+        merged.tot_ccx += report.tot_ccx;
+        merged.tot_ccz += report.tot_ccz;
+        merged.tot_cliff += report.tot_cliff;
+        merged.n_shots += report.n_shots;
+        merged.oracle_failures += report.oracle_failures;
+        merged.input_failures += report.input_failures;
+        merged.phase_garbage_batches += report.phase_garbage_batches;
+        merged.ancilla_garbage_batches += report.ancilla_garbage_batches;
+        if merged.fail_reason.is_none() {
+            merged.fail_reason = report.fail_reason;
+        }
+    }
+    finalize_report(merged)
+}
+
+fn requested_eval_threads(num_batches: usize, ops: &[Op]) -> usize {
+    let requested = std::env::var("ECDLP_EVAL_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(1)
+        .min(num_batches.max(1));
+    if requested <= 1 {
+        return 1;
+    }
+    let has_random_ops = ops
+        .iter()
+        .any(|op| matches!(op.kind, OperationType::R | OperationType::Hmr));
+    if has_random_ops {
+        eprintln!(
+            "warning: ECDLP_EVAL_THREADS ignored because R/HMR operations consume simulator randomness"
+        );
+        1
+    } else {
+        requested
+    }
+}
+
+fn batch_xof(batch: usize) -> sha3::Shake256Reader {
+    let mut hasher = Shake256::default();
+    hasher.update(b"ecdlp-eval-parallel-batch-xof-v1");
+    hasher.update(&(batch as u64).to_le_bytes());
+    hasher.finalize_xof()
+}
+
+fn run_test_batch(
+    ops: &[Op],
+    layout_regs: &[Vec<QubitOrBit>],
+    total_qubits: u64,
+    num_bits: u64,
+    inputs: &[TestInput],
+    batch: usize,
+) -> SeedReport {
+    let start = batch * SHOTS_PER_BATCH;
+    let bs = SHOTS_PER_BATCH.min(inputs.len() - start);
+    let cond_mask: u64 = if bs == SHOTS_PER_BATCH {
+        u64::MAX
+    } else {
+        (1u64 << bs) - 1
+    };
+
+    let mut xof = batch_xof(batch);
+    let mut sim = Simulator::new(total_qubits as usize, num_bits as usize, &mut xof);
+    let mut report = empty_report();
+    report.n_shots = bs;
+
+    for shot in 0..bs {
+        let input = inputs[start + shot];
+        sim.set_register(&layout_regs[0], U256::from(input.a), shot);
+        sim.set_register(&layout_regs[1], U256::from(input.b), shot);
+        sim.set_register(&layout_regs[2], U256::from(input.p.x), shot);
+        sim.set_register(&layout_regs[3], U256::from(input.p.y), shot);
+        sim.set_register(
+            &layout_regs[4],
+            U256::from(u16::from(input.p.infinity)),
+            shot,
+        );
+        sim.set_register(&layout_regs[5], U256::from(input.q.x), shot);
+        sim.set_register(&layout_regs[6], U256::from(input.q.y), shot);
+        sim.set_register(
+            &layout_regs[7],
+            U256::from(u16::from(input.q.infinity)),
+            shot,
+        );
+    }
+
+    sim.apply_iter_masked(ops.iter(), cond_mask);
+
+    for shot in 0..bs {
+        let i = start + shot;
+        let input = inputs[i];
+        let a_in = sim.get_register(&layout_regs[0], shot).to::<u16>();
+        let b_in = sim.get_register(&layout_regs[1], shot).to::<u16>();
+        let px_in = sim.get_register(&layout_regs[2], shot).to::<u16>();
+        let py_in = sim.get_register(&layout_regs[3], shot).to::<u16>();
+        let pinf_in = sim.get_register(&layout_regs[4], shot).to::<u16>() != 0;
+        let qx_in = sim.get_register(&layout_regs[5], shot).to::<u16>();
+        let qy_in = sim.get_register(&layout_regs[6], shot).to::<u16>();
+        let qinf_in = sim.get_register(&layout_regs[7], shot).to::<u16>() != 0;
+        if a_in != input.a
+            || b_in != input.b
+            || px_in != input.p.x
+            || py_in != input.p.y
+            || pinf_in != input.p.infinity
+            || qx_in != input.q.x
+            || qy_in != input.q.y
+            || qinf_in != input.q.infinity
+        {
+            report.input_failures += 1;
+            if report.fail_reason.is_none() {
+                report.fail_reason = Some(format!(
+                    "INPUT MISMATCH shot {i}: expected a={} b={} P=({},{},inf={}) Q=({},{},inf={}), got a={a_in} b={b_in} P=({px_in},{py_in},inf={pinf_in}) Q=({qx_in},{qy_in},inf={qinf_in})",
+                    input.a,
+                    input.b,
+                    input.p.x,
+                    input.p.y,
+                    input.p.infinity,
+                    input.q.x,
+                    input.q.y,
+                    input.q.infinity
+                ));
+            }
+            report.ok = false;
+            continue;
+        }
+
+        let got_x = sim.get_register(&layout_regs[8], shot).to::<u16>();
+        let got_y = sim.get_register(&layout_regs[9], shot).to::<u16>();
+        let got_inf = sim.get_register(&layout_regs[10], shot).to::<u16>() != 0;
+        let expected = oracle_point(input.a, input.b, input.p, input.q);
+        let output_ok = if expected.infinity {
+            got_inf && got_x == 0 && got_y == 0
+        } else {
+            !got_inf && got_x == expected.x && got_y == expected.y
+        };
+        if !output_ok {
+            report.oracle_failures += 1;
+            if report.fail_reason.is_none() {
+                report.fail_reason = Some(format!(
+                    "ORACLE MISMATCH shot {i}: a={} b={} P=({},{},inf={}) Q=({},{},inf={}) got=({got_x},{got_y},inf={got_inf}) expected=({},{},inf={})",
+                    input.a,
+                    input.b,
+                    input.p.x,
+                    input.p.y,
+                    input.p.infinity,
+                    input.q.x,
+                    input.q.y,
+                    input.q.infinity,
+                    expected.x,
+                    expected.y,
+                    expected.infinity
+                ));
+            }
+            report.ok = false;
+        }
+    }
+
+    let phase = sim.phase & cond_mask;
+    if phase != 0 {
+        report.phase_garbage_batches += 1;
+        if report.fail_reason.is_none() {
+            report.fail_reason = Some(format!(
+                "PHASE GARBAGE: global_phase = {phase:#018x} across {bs} live shots"
+            ));
+        }
+        report.ok = false;
+    }
+
+    for register in layout_regs {
+        for wire in register {
+            if let QubitOrBit::Qubit(q) = *wire {
+                *sim.qubit_mut(q) = 0;
+            }
+        }
+    }
+    let mut garbage_q: Option<u64> = None;
+    for q in 0..total_qubits {
+        let value = sim.qubit(QubitId(q)) & cond_mask;
+        if value != 0 {
+            garbage_q = Some(q);
+            break;
+        }
+    }
+    if let Some(q) = garbage_q {
+        report.ancilla_garbage_batches += 1;
+        let value = sim.qubit(QubitId(q)) & cond_mask;
+        if report.fail_reason.is_none() {
+            report.fail_reason = Some(format!(
+                "ANCILLA GARBAGE: qubit {q} = {value:#018x}; every non-register qubit must end in zero"
+            ));
+        }
+        report.ok = false;
+    }
+
+    report.tot_tof = sim.stats.toffoli_gates;
+    report.tot_toffoli_depth = sim.stats.toffoli_depth;
+    report.tot_ccx = sim.stats.ccx_gates;
+    report.tot_ccz = sim.stats.ccz_gates;
+    report.tot_cliff = sim.stats.clifford_gates;
+    finalize_report(report)
+}
+
 fn run_tests(
     ops: &[Op],
     layout_regs: &[Vec<QubitOrBit>],
@@ -210,171 +451,37 @@ fn run_tests(
     }
 
     let n = inputs.len();
-    let mut sim = Simulator::new(total_qubits as usize, num_bits as usize, &mut xof);
-    let mut ok = true;
-    let mut fail_reason: Option<String> = None;
-    let mut oracle_failures = 0usize;
-    let mut input_failures = 0usize;
-    let mut phase_garbage_batches = 0usize;
-    let mut ancilla_garbage_batches = 0usize;
+    let num_batches = n.div_ceil(SHOTS_PER_BATCH);
+    let threads = requested_eval_threads(num_batches, ops);
+    println!("  eval workers            : {threads}");
 
-    const BATCH: usize = 64;
-    let num_batches = n.div_ceil(BATCH);
-    for batch in 0..num_batches {
-        let bs = BATCH.min(n - batch * BATCH);
-        let cond_mask: u64 = if bs == 64 { u64::MAX } else { (1u64 << bs) - 1 };
-
-        sim.clear_for_shot();
-        for shot in 0..bs {
-            let i = batch * BATCH + shot;
-            let input = inputs[i];
-            sim.set_register(&layout_regs[0], U256::from(input.a), shot);
-            sim.set_register(&layout_regs[1], U256::from(input.b), shot);
-            sim.set_register(&layout_regs[2], U256::from(input.p.x), shot);
-            sim.set_register(&layout_regs[3], U256::from(input.p.y), shot);
-            sim.set_register(
-                &layout_regs[4],
-                U256::from(u16::from(input.p.infinity)),
-                shot,
-            );
-            sim.set_register(&layout_regs[5], U256::from(input.q.x), shot);
-            sim.set_register(&layout_regs[6], U256::from(input.q.y), shot);
-            sim.set_register(
-                &layout_regs[7],
-                U256::from(u16::from(input.q.infinity)),
-                shot,
-            );
-        }
-
-        sim.apply_iter_masked(ops.iter(), cond_mask);
-
-        for shot in 0..bs {
-            let i = batch * BATCH + shot;
-            let input = inputs[i];
-            let a_in = sim.get_register(&layout_regs[0], shot).to::<u16>();
-            let b_in = sim.get_register(&layout_regs[1], shot).to::<u16>();
-            let px_in = sim.get_register(&layout_regs[2], shot).to::<u16>();
-            let py_in = sim.get_register(&layout_regs[3], shot).to::<u16>();
-            let pinf_in = sim.get_register(&layout_regs[4], shot).to::<u16>() != 0;
-            let qx_in = sim.get_register(&layout_regs[5], shot).to::<u16>();
-            let qy_in = sim.get_register(&layout_regs[6], shot).to::<u16>();
-            let qinf_in = sim.get_register(&layout_regs[7], shot).to::<u16>() != 0;
-            if a_in != input.a
-                || b_in != input.b
-                || px_in != input.p.x
-                || py_in != input.p.y
-                || pinf_in != input.p.infinity
-                || qx_in != input.q.x
-                || qy_in != input.q.y
-                || qinf_in != input.q.infinity
-            {
-                input_failures += 1;
-                if fail_reason.is_none() {
-                    fail_reason = Some(format!(
-                        "INPUT MISMATCH shot {i}: expected a={} b={} P=({},{},inf={}) Q=({},{},inf={}), got a={a_in} b={b_in} P=({px_in},{py_in},inf={pinf_in}) Q=({qx_in},{qy_in},inf={qinf_in})",
-                        input.a,
-                        input.b,
-                        input.p.x,
-                        input.p.y,
-                        input.p.infinity,
-                        input.q.x,
-                        input.q.y,
-                        input.q.infinity
+    let reports = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(threads);
+        for worker in 0..threads {
+            let inputs = &inputs;
+            handles.push(scope.spawn(move || {
+                let mut reports = Vec::new();
+                for batch in (worker..num_batches).step_by(threads) {
+                    reports.push(run_test_batch(
+                        ops,
+                        layout_regs,
+                        total_qubits,
+                        num_bits,
+                        inputs,
+                        batch,
                     ));
                 }
-                ok = false;
-                continue;
-            }
-
-            let got_x = sim.get_register(&layout_regs[8], shot).to::<u16>();
-            let got_y = sim.get_register(&layout_regs[9], shot).to::<u16>();
-            let got_inf = sim.get_register(&layout_regs[10], shot).to::<u16>() != 0;
-            let expected = oracle_point(input.a, input.b, input.p, input.q);
-            let output_ok = if expected.infinity {
-                got_inf && got_x == 0 && got_y == 0
-            } else {
-                !got_inf && got_x == expected.x && got_y == expected.y
-            };
-            if !output_ok {
-                oracle_failures += 1;
-                if fail_reason.is_none() {
-                    fail_reason = Some(format!(
-                        "ORACLE MISMATCH shot {i}: a={} b={} P=({},{},inf={}) Q=({},{},inf={}) got=({got_x},{got_y},inf={got_inf}) expected=({},{},inf={})",
-                        input.a,
-                        input.b,
-                        input.p.x,
-                        input.p.y,
-                        input.p.infinity,
-                        input.q.x,
-                        input.q.y,
-                        input.q.infinity,
-                        expected.x,
-                        expected.y,
-                        expected.infinity
-                    ));
-                }
-                ok = false;
-            }
+                reports
+            }));
         }
 
-        let phase = sim.phase & cond_mask;
-        if phase != 0 {
-            phase_garbage_batches += 1;
-            if fail_reason.is_none() {
-                fail_reason = Some(format!(
-                    "PHASE GARBAGE: global_phase = {phase:#018x} across {bs} live shots"
-                ));
-            }
-            ok = false;
-        }
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("eval worker panicked"))
+            .collect::<Vec<_>>()
+    });
 
-        for register in layout_regs {
-            for wire in register {
-                if let QubitOrBit::Qubit(q) = *wire {
-                    *sim.qubit_mut(q) = 0;
-                }
-            }
-        }
-        let mut garbage_q: Option<u64> = None;
-        for q in 0..total_qubits {
-            let value = sim.qubit(QubitId(q)) & cond_mask;
-            if value != 0 {
-                garbage_q = Some(q);
-                break;
-            }
-        }
-        if let Some(q) = garbage_q {
-            ancilla_garbage_batches += 1;
-            let value = sim.qubit(QubitId(q)) & cond_mask;
-            if fail_reason.is_none() {
-                fail_reason = Some(format!(
-                    "ANCILLA GARBAGE: qubit {q} = {value:#018x}; every non-register qubit must end in zero"
-                ));
-            }
-            ok = false;
-        }
-    }
-
-    let denom = n.max(1) as f64;
-    SeedReport {
-        ok,
-        avg_cliff: sim.stats.clifford_gates as f64 / denom,
-        avg_tof: sim.stats.toffoli_gates as f64 / denom,
-        avg_toffoli_depth: sim.stats.toffoli_depth as f64 / denom,
-        avg_ccx: sim.stats.ccx_gates as f64 / denom,
-        avg_ccz: sim.stats.ccz_gates as f64 / denom,
-        tot_tof: sim.stats.toffoli_gates,
-        tot_toffoli_depth: sim.stats.toffoli_depth,
-        tot_ccx: sim.stats.ccx_gates,
-        tot_ccz: sim.stats.ccz_gates,
-        tot_cliff: sim.stats.clifford_gates,
-        n_shots: n,
-        oracle_failures,
-        input_failures,
-        phase_garbage_batches,
-        ancilla_garbage_batches,
-        fail_reason,
-    }
+    merge_reports(reports)
 }
 
 fn parse_note() -> String {
