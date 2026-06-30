@@ -29,7 +29,7 @@ const TRACKS = {
   },
   "shor-ecdlp-5bit": {
     gate: "fiat_shamir_shor_ecdlp_5bit_in_place_field_arithmetic_oracle_v1",
-    editablePaths: ["src/shor_oracle"],
+    editablePaths: ["src/shor_oracle/field_arithmetic.rs", "src/shor_oracle/architecture.mmd", "src/shor_oracle/memory"],
     requiredChecks: ["oracle correctness", "in-place F_31 field arithmetic composition", "input preservation", "phase cleanliness", "ancilla cleanup"],
     defaultNoteFile: "src/shor_oracle/memory/README.md",
     architectureDiagram: REQUIRED_ARCHITECTURE_PATH
@@ -83,8 +83,9 @@ Help:
 
 Agent guidance:
   Read README.md and benchmark.json first. Use command-level --help before each
-  step. Contestant edits should stay under src/shor_oracle/. Do not hand-edit
-  score.json, ops.bin, results.tsv, or the trusted harness.
+  step. Contestant code edits should stay in src/shor_oracle/field_arithmetic.rs.
+  Keep notes under src/shor_oracle/memory/ and update src/shor_oracle/architecture.mmd.
+  Do not hand-edit score.json, ops.bin, results.tsv, or the trusted harness.
 
 Use repo-local build, cache, scratch, and tool paths under .workspace/ to avoid
 permission issues. Cargo is configured to build into .workspace/target.
@@ -122,7 +123,8 @@ Build artifacts should stay under .workspace/target. Put any extra scratch
 outputs or generated experiments under .workspace/ so they remain ignored by
 git and avoid system permission issues.
 
-Use this after modifying src/shor_oracle/. A valid run must pass all 9024
+Use this after modifying src/shor_oracle/field_arithmetic.rs or its notes/diagram.
+A valid run must pass all 9024
 Fiat-Shamir shots and produce score.json with status "ranked".
 
 This command is local and does not require an API key.`,
@@ -186,8 +188,8 @@ Options:
 
 Before submitting:
   1. Run ecdlp validate.
-  2. Make sure src/shor_oracle/memory/README.md explains the approach.
-  3. Make sure src/shor_oracle/architecture.mmd matches the submitted oracle.`,
+  2. Make sure src/shor_oracle/memory/README.md explains the field-kernel approach.
+  3. Make sure src/shor_oracle/architecture.mmd matches the submitted arithmetic implementation.`,
 
   login: `ecdlp login
 

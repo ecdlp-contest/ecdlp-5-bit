@@ -7,14 +7,15 @@ The baseline is a reversible arithmetic implementation of the 5-bit Shor oracle:
 ```
 
 A good optimization keeps the 11-register ABI unchanged while reducing CCX
-count, qubits, or both. The submitted source is expected to optimize the Shor
-oracle using in-place reversible `F_31` arithmetic kernels, not enumerated
-lookup tables. There are no hidden `F_17` or `F_19` field-kernel validation
-shots.
+count, qubits, or both. The trusted `src/shor_oracle/mod.rs` composer freezes
+the point and scalar-multiplication shape; submitted code changes should
+optimize `src/shor_oracle/field_arithmetic.rs` using in-place reversible
+`F_31` arithmetic kernels, not enumerated lookup tables. There are no hidden
+`F_17` or `F_19` field-kernel validation shots.
 
 ## Loop
 
-1. Edit only `src/shor_oracle/`.
+1. Edit `src/shor_oracle/field_arithmetic.rs`, `src/shor_oracle/architecture.mmd`, and notes under `src/shor_oracle/memory/`.
 2. Run `cargo fmt --check`.
 3. Run `./ecdlp.js run --note "short experiment label"` or `.\benchmark.ps1`.
 4. Record score, Toffoli, qubits, ops, and the idea tested in
@@ -32,8 +33,8 @@ for optimization workflow notes.
 
 ## Useful Directions
 
-- Reuse scratch inside the arithmetic expression network so fewer qubits remain
-  live between compute, output-copy, and uncompute.
+- Reuse scratch inside field kernels so fewer qubits remain live between
+  compute, output-copy, and uncompute.
 - Optimize the field kernels used by scalar multiplication and the final
   `aP + bQ` point addition.
 - Specialize the `F_31` field kernels for `31 = 2^5 - 1` while keeping them

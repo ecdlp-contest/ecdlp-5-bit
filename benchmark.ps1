@@ -21,7 +21,7 @@ function Invoke-NativeChecked {
 Push-Location $PSScriptRoot
 try {
   if (-not $env:CARGO_TARGET_DIR) {
-    $env:CARGO_TARGET_DIR = Join-Path $PSScriptRoot "target"
+    $env:CARGO_TARGET_DIR = Join-Path $PSScriptRoot ".workspace\target"
   }
 
   Remove-Item -LiteralPath "ops.bin" -Force -ErrorAction SilentlyContinue

@@ -3,9 +3,11 @@
 Maintainers should accept only source changes that preserve the public
 `shor-ecdlp-5bit` contract and improve the trusted score.
 
-Only Track 1 is active for public submissions. Accept changes under
-`src/shor_oracle/`; `src/qft/` and `src/full_shor/` remain reserved and
-unscored until separate track contracts exist.
+Only Track 1 is active for public submissions. Accept code changes under
+`src/shor_oracle/field_arithmetic.rs` plus required updates to
+`src/shor_oracle/architecture.mmd` and `src/shor_oracle/memory/`.
+`src/qft/` and `src/full_shor/` remain reserved and unscored until separate
+track contracts exist.
 
 `README.md` is the canonical contestant-facing submission guide. This document
 is the maintainer-side acceptance checklist for reruns and merge decisions.
@@ -48,7 +50,7 @@ Package metadata must include:
 
 ```text
 benchmark: shor-ecdlp-5bit
-editablePaths: ["src/shor_oracle"]
+editablePaths: ["src/shor_oracle/field_arithmetic.rs", "src/shor_oracle/architecture.mmd", "src/shor_oracle/memory"]
 artifactBytes: <ops.bin byte size>
 artifactSha256: <ops.bin sha256>
 ```

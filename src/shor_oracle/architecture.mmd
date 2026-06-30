@@ -6,8 +6,8 @@ flowchart TD
   Target --> Algorithm
   Target --> Optimization
 
-  Algorithm --> Boundary["Submitted editable boundary: src/shor_oracle"]
-  Algorithm --> Build["Trusted src/shor_oracle::build emits the primitive op stream"]
+  Algorithm --> Boundary["Submitted editable boundary: field_arithmetic.rs plus diagram and memory notes"]
+  Algorithm --> Build["Trusted oracle composer src/shor_oracle/mod.rs emits the primitive op stream"]
   Algorithm --> Registers["11 public registers: a, b, P, Q, R=aP+bQ"]
   Algorithm --> Curve["Toy curve y^2 = x^3 + 7 over F_31 with order-21 subgroup"]
   Algorithm --> Encoding["Point encoding: five x bits, five y bits, and one infinity flag"]
@@ -27,18 +27,19 @@ flowchart TD
   FieldArithmetic --> FieldAdd["add mod 31"]
   FieldArithmetic --> FieldSub["subtract mod 31"]
   FieldArithmetic --> FieldMul["multiply mod 31"]
-  FieldArithmetic --> FieldInv["Fermat inverse mod 31"]
+  FieldArithmetic --> FieldInv["inverse mod 31, with inverse(0)=0 for invalid branches"]
   FieldArithmetic --> FieldMux["compare, zero-test, and mux"]
 
   Segment --> Cleanup["All non-register arithmetic scratch is restored to zero before reuse"]
   Cleanup --> Ancilla["Ancilla cleanup is verified after public registers are ignored"]
 
-  Optimization --> CurrentShape["Current submitted shape: segment-pebbled lookup-free arithmetic baseline"]
-  CurrentShape --> Contract["Contenders optimize field kernels, not the trusted point/oracle shape"]
+  Optimization --> CurrentShape["Current submitted shape: bounded-register reversible arithmetic baseline"]
+  CurrentShape --> Contract["Contenders optimize field kernels; trusted mod.rs freezes point and oracle shape"]
   Contract --> NoPublicWitness["No P+Q or 2P witness lanes are part of the scored ABI"]
   Contract --> NoHiddenWitness["No hidden F_17 or F_19 field-kernel validation shots are run"]
-  CurrentShape --> Tradeoff["Coarse Bennett pebbling lowers persistent scratch but recomputes scalar products"]
-  Tradeoff --> ReplaceLater["Future work should pebble inside scalar multiplication and reusable field kernels"]
+  Contract --> NoLookupTables["Submissions shall build reversible in-place F_31 arithmetic instead of point or field lookup tables"]
+  CurrentShape --> Tradeoff["Bounded registers keep logical qubits under 210 while recomputing reversible segments"]
+  Tradeoff --> ReplaceLater["Future work should reduce field-kernel gates without expanding live scratch"]
 
   Preserve --> Validation["Trusted validation"]
   Outputs --> Validation

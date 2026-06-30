@@ -1,15 +1,15 @@
-//! Trusted composition for the 5-bit Shor ECDLP variable-base oracle.
+//! Low-qubit reversible composition for the 5-bit Shor ECDLP variable-base
+//! oracle.
 //!
-//! Contest submissions may optimize this module and its `field_arithmetic`
-//! submodule. The contract is still the Shor oracle over `F_31`; implementations
-//! should use reversible field arithmetic rather than lookup tables.
+//! The circuit still computes the scored oracle over `F_31`:
+//! `|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>`.
 
 use crate::circuit::{Op, QubitId};
 use crate::ops_io::{OpSink, VecOpSink};
 
 mod field_arithmetic;
 
-use field_arithmetic::{bit_at, const_bits, Builder, Signal, FIELD_MODULUS, WIDTH};
+use field_arithmetic::{const_bits, Builder, Signal, FIELD_MODULUS, WIDTH};
 
 #[derive(Clone)]
 struct PointValue {
@@ -29,11 +29,11 @@ fn qubit_signals(qubits: &[QubitId]) -> Vec<Signal> {
     qubits.iter().copied().map(Signal::Qubit).collect()
 }
 
-fn held_point(register: &PointRegister) -> PointValue {
+fn point_signals(point: &PointRegister) -> PointValue {
     PointValue {
-        x: qubit_signals(&register.x),
-        y: qubit_signals(&register.y),
-        inf: Signal::Qubit(register.inf),
+        x: qubit_signals(&point.x),
+        y: qubit_signals(&point.y),
+        inf: Signal::Qubit(point.inf),
     }
 }
 
@@ -43,6 +43,20 @@ fn point_const(x: u16, y: u16, inf: bool) -> PointValue {
         y: const_bits(y, WIDTH),
         inf: Signal::Const(inf),
     }
+}
+
+fn hold_point(builder: &mut Builder<impl OpSink>) -> PointRegister {
+    PointRegister {
+        x: builder.hold_qubits(WIDTH),
+        y: builder.hold_qubits(WIDTH),
+        inf: builder.hold_qubits(1)[0],
+    }
+}
+
+fn release_point(builder: &mut Builder<impl OpSink>, point: PointRegister) {
+    builder.release_hold_qubits(point.x);
+    builder.release_hold_qubits(point.y);
+    builder.release_hold_qubits(vec![point.inf]);
 }
 
 fn mux_point(
@@ -58,105 +72,21 @@ fn mux_point(
     }
 }
 
-fn point_add(
-    builder: &mut Builder<impl OpSink>,
-    left: &PointValue,
-    right: &PointValue,
-) -> PointValue {
-    let same_x = builder.eq_bits(&left.x, &right.x);
-    let same_y = builder.eq_bits(&left.y, &right.y);
-    let not_left_inf = builder.not(left.inf.clone());
-    let not_right_inf = builder.not(right.inf.clone());
-    let neither_inf = builder.and(not_left_inf, not_right_inf);
-
-    let y_sum = builder.add_mod(&left.y, &right.y, FIELD_MODULUS);
-    let y_sum_zero = builder.is_zero(&y_sum);
-    let same_x_and_neg_y = builder.and(same_x.clone(), y_sum_zero);
-    let inverse_case = builder.and(same_x_and_neg_y, neither_inf.clone());
-
-    let same_point_xy = builder.and(same_x, same_y);
-    let same_point = builder.and(same_point_xy, neither_inf);
-
-    let add_num = builder.sub_mod(&right.y, &left.y, FIELD_MODULUS);
-    let add_den = builder.sub_mod(&right.x, &left.x, FIELD_MODULUS);
-    let add_den_inv = builder.inv_mod(&add_den, FIELD_MODULUS);
-    let lambda_add = builder.mul_mod(&add_num, &add_den_inv, FIELD_MODULUS);
-
-    let x_squared = builder.mul_mod(&left.x, &left.x, FIELD_MODULUS);
-    let double_num = builder.mul_const_mod(&x_squared, 3, FIELD_MODULUS);
-    let double_den = builder.mul_const_mod(&left.y, 2, FIELD_MODULUS);
-    let double_den_inv = builder.inv_mod(&double_den, FIELD_MODULUS);
-    let lambda_double = builder.mul_mod(&double_num, &double_den_inv, FIELD_MODULUS);
-    let lambda = builder.mux_bits(same_point, &lambda_double, &lambda_add);
-
-    let lambda_squared = builder.mul_mod(&lambda, &lambda, FIELD_MODULUS);
-    let x_minus_left = builder.sub_mod(&lambda_squared, &left.x, FIELD_MODULUS);
-    let x3 = builder.sub_mod(&x_minus_left, &right.x, FIELD_MODULUS);
-    let left_x_minus_x3 = builder.sub_mod(&left.x, &x3, FIELD_MODULUS);
-    let lambda_times_delta = builder.mul_mod(&lambda, &left_x_minus_x3, FIELD_MODULUS);
-    let y3 = builder.sub_mod(&lambda_times_delta, &left.y, FIELD_MODULUS);
-
-    let formula = PointValue {
-        x: x3,
-        y: y3,
-        inf: Signal::Const(false),
-    };
-    let infinity = point_const(0, 0, true);
-    let after_inverse = mux_point(builder, inverse_case, &infinity, &formula);
-    let after_right_inf = mux_point(builder, right.inf.clone(), left, &after_inverse);
-    mux_point(builder, left.inf.clone(), right, &after_right_inf)
-}
-
-fn point_double(builder: &mut Builder<impl OpSink>, point: &PointValue) -> PointValue {
-    let y_zero = builder.is_zero(&point.y);
-    let x_squared = builder.mul_mod(&point.x, &point.x, FIELD_MODULUS);
-    let numerator = builder.mul_const_mod(&x_squared, 3, FIELD_MODULUS);
-    let denominator = builder.mul_const_mod(&point.y, 2, FIELD_MODULUS);
-    let denominator_inv = builder.inv_mod(&denominator, FIELD_MODULUS);
-    let lambda = builder.mul_mod(&numerator, &denominator_inv, FIELD_MODULUS);
-    let lambda_squared = builder.mul_mod(&lambda, &lambda, FIELD_MODULUS);
-    let double_x = builder.mul_const_mod(&point.x, 2, FIELD_MODULUS);
-    let x3 = builder.sub_mod(&lambda_squared, &double_x, FIELD_MODULUS);
-    let x_minus_x3 = builder.sub_mod(&point.x, &x3, FIELD_MODULUS);
-    let lambda_times_delta = builder.mul_mod(&lambda, &x_minus_x3, FIELD_MODULUS);
-    let y3 = builder.sub_mod(&lambda_times_delta, &point.y, FIELD_MODULUS);
-
-    let formula = PointValue {
-        x: x3,
-        y: y3,
-        inf: Signal::Const(false),
-    };
-    let infinity = point_const(0, 0, true);
-    let invalid_double = builder.or(point.inf.clone(), y_zero);
-    mux_point(builder, invalid_double, &infinity, &formula)
-}
-
-fn point_neg(builder: &mut Builder<impl OpSink>, point: &PointValue) -> PointValue {
-    let zero = const_bits(0, WIDTH);
-    PointValue {
-        x: point.x.clone(),
-        y: builder.sub_mod(&zero, &point.y, FIELD_MODULUS),
-        inf: point.inf.clone(),
-    }
-}
-
-fn point_power_of_two(
-    builder: &mut Builder<impl OpSink>,
-    point: &PointValue,
-    bit: usize,
-) -> PointValue {
-    let mut cur = point.clone();
-    for _ in 0..bit {
-        cur = point_double(builder, &cur);
-    }
-    cur
-}
-
 fn copy_point(builder: &mut Builder<impl OpSink>, point: PointValue, target: &PointRegister) {
     builder.finish_segment(
         vec![(point.x, target.x.clone()), (point.y, target.y.clone())],
         vec![(point.inf, target.inf)],
     );
+}
+
+fn xor_point_into(
+    builder: &mut Builder<impl OpSink>,
+    source: &PointRegister,
+    target: &PointRegister,
+) {
+    builder.xor_bits_into(&source.x, &target.x);
+    builder.xor_bits_into(&source.y, &target.y);
+    builder.xor_qubit_into(source.inf, target.inf);
 }
 
 fn swap_points(builder: &mut Builder<impl OpSink>, left: &PointRegister, right: &PointRegister) {
@@ -169,43 +99,289 @@ fn swap_points(builder: &mut Builder<impl OpSink>, left: &PointRegister, right: 
     builder.swap(left.inf, right.inf);
 }
 
+fn same_point_signal(builder: &mut Builder<impl OpSink>, point: &PointRegister) -> Signal {
+    let y_zero = builder.is_zero(&qubit_signals(&point.y));
+    builder.or(Signal::Qubit(point.inf), y_zero)
+}
+
+fn add_same_point_signal(
+    builder: &mut Builder<impl OpSink>,
+    left: &PointRegister,
+    right: &PointRegister,
+) -> Signal {
+    let same_x = builder.eq_bits(&qubit_signals(&left.x), &qubit_signals(&right.x));
+    let same_y = builder.eq_bits(&qubit_signals(&left.y), &qubit_signals(&right.y));
+    let same_xy = builder.and(same_x, same_y);
+    let not_left_inf = builder.not(Signal::Qubit(left.inf));
+    let not_right_inf = builder.not(Signal::Qubit(right.inf));
+    let neither_inf = builder.and(not_left_inf, not_right_inf);
+    builder.and(same_xy, neither_inf)
+}
+
+fn inverse_case_signal(
+    builder: &mut Builder<impl OpSink>,
+    left: &PointRegister,
+    right: &PointRegister,
+    y_sum: &[QubitId],
+) -> Signal {
+    let same_x = builder.eq_bits(&qubit_signals(&left.x), &qubit_signals(&right.x));
+    let y_sum_zero = builder.is_zero(&qubit_signals(y_sum));
+    let same_x_and_neg_y = builder.and(same_x, y_sum_zero);
+    let not_left_inf = builder.not(Signal::Qubit(left.inf));
+    let not_right_inf = builder.not(Signal::Qubit(right.inf));
+    let neither_inf = builder.and(not_left_inf, not_right_inf);
+    builder.and(same_x_and_neg_y, neither_inf)
+}
+
+fn point_double_xor(
+    builder: &mut Builder<impl OpSink>,
+    point: &PointRegister,
+    out: &PointRegister,
+) {
+    let x_squared = builder.hold_qubits(WIDTH);
+    let numerator = builder.hold_qubits(WIDTH);
+    let denominator = builder.hold_qubits(WIDTH);
+    let denominator_inv = builder.hold_qubits(WIDTH);
+    let lambda = builder.hold_qubits(WIDTH);
+    let lambda_squared = builder.hold_qubits(WIDTH);
+    let double_x = builder.hold_qubits(WIDTH);
+    let x3 = builder.hold_qubits(WIDTH);
+    let x_minus_x3 = builder.hold_qubits(WIDTH);
+    let lambda_times_delta = builder.hold_qubits(WIDTH);
+    let y3 = builder.hold_qubits(WIDTH);
+
+    let compute_tape = builder.record(|builder| {
+        builder.xor_mul_mod_into(&point.x, &point.x, &x_squared);
+        builder.xor_mul_const_mod_into(&x_squared, 3, &numerator);
+        builder.xor_mul_const_mod_into(&point.y, 2, &denominator);
+        builder.xor_inv_mod_into(&denominator, &denominator_inv);
+        builder.xor_mul_mod_into(&numerator, &denominator_inv, &lambda);
+        builder.xor_mul_mod_into(&lambda, &lambda, &lambda_squared);
+        builder.xor_mul_const_mod_into(&point.x, 2, &double_x);
+        builder.xor_sub_mod_into(&lambda_squared, &double_x, &x3);
+        builder.xor_sub_mod_into(&point.x, &x3, &x_minus_x3);
+        builder.xor_mul_mod_into(&lambda, &x_minus_x3, &lambda_times_delta);
+        builder.xor_sub_mod_into(&lambda_times_delta, &point.y, &y3);
+    });
+
+    let formula = PointValue {
+        x: qubit_signals(&x3),
+        y: qubit_signals(&y3),
+        inf: Signal::Const(false),
+    };
+    let invalid_double = same_point_signal(builder, point);
+    let selected = mux_point(builder, invalid_double, &point_const(0, 0, true), &formula);
+    copy_point(builder, selected, out);
+
+    builder.append_reverse_tape(&compute_tape);
+    for field in [
+        x_squared,
+        numerator,
+        denominator,
+        denominator_inv,
+        lambda,
+        lambda_squared,
+        double_x,
+        x3,
+        x_minus_x3,
+        lambda_times_delta,
+        y3,
+    ] {
+        builder.release_hold_qubits(field);
+    }
+}
+
+fn point_add_xor(
+    builder: &mut Builder<impl OpSink>,
+    left: &PointRegister,
+    right: &PointRegister,
+    out: &PointRegister,
+) {
+    let y_sum = builder.hold_qubits(WIDTH);
+    let add_num = builder.hold_qubits(WIDTH);
+    let add_den = builder.hold_qubits(WIDTH);
+    let add_den_inv = builder.hold_qubits(WIDTH);
+    let lambda_add = builder.hold_qubits(WIDTH);
+    let x_squared = builder.hold_qubits(WIDTH);
+    let double_num = builder.hold_qubits(WIDTH);
+    let double_den = builder.hold_qubits(WIDTH);
+    let double_den_inv = builder.hold_qubits(WIDTH);
+    let lambda_double = builder.hold_qubits(WIDTH);
+    let lambda = builder.hold_qubits(WIDTH);
+    let lambda_squared = builder.hold_qubits(WIDTH);
+    let x_minus_left = builder.hold_qubits(WIDTH);
+    let x3 = builder.hold_qubits(WIDTH);
+    let left_x_minus_x3 = builder.hold_qubits(WIDTH);
+    let lambda_times_delta = builder.hold_qubits(WIDTH);
+    let y3 = builder.hold_qubits(WIDTH);
+
+    let compute_tape = builder.record(|builder| {
+        builder.xor_add_mod_into(&left.y, &right.y, &y_sum);
+        builder.xor_sub_mod_into(&right.y, &left.y, &add_num);
+        builder.xor_sub_mod_into(&right.x, &left.x, &add_den);
+        builder.xor_inv_mod_into(&add_den, &add_den_inv);
+        builder.xor_mul_mod_into(&add_num, &add_den_inv, &lambda_add);
+
+        builder.xor_mul_mod_into(&left.x, &left.x, &x_squared);
+        builder.xor_mul_const_mod_into(&x_squared, 3, &double_num);
+        builder.xor_mul_const_mod_into(&left.y, 2, &double_den);
+        builder.xor_inv_mod_into(&double_den, &double_den_inv);
+        builder.xor_mul_mod_into(&double_num, &double_den_inv, &lambda_double);
+
+        let same_point = add_same_point_signal(builder, left, right);
+        let lambda_bits = builder.mux_bits(
+            same_point,
+            &qubit_signals(&lambda_double),
+            &qubit_signals(&lambda_add),
+        );
+        builder.finish_segment(vec![(lambda_bits, lambda.clone())], Vec::new());
+
+        builder.xor_mul_mod_into(&lambda, &lambda, &lambda_squared);
+        builder.xor_sub_mod_into(&lambda_squared, &left.x, &x_minus_left);
+        builder.xor_sub_mod_into(&x_minus_left, &right.x, &x3);
+        builder.xor_sub_mod_into(&left.x, &x3, &left_x_minus_x3);
+        builder.xor_mul_mod_into(&lambda, &left_x_minus_x3, &lambda_times_delta);
+        builder.xor_sub_mod_into(&lambda_times_delta, &left.y, &y3);
+    });
+
+    let formula = PointValue {
+        x: qubit_signals(&x3),
+        y: qubit_signals(&y3),
+        inf: Signal::Const(false),
+    };
+    let inverse_case = inverse_case_signal(builder, left, right, &y_sum);
+    let after_inverse = mux_point(builder, inverse_case, &point_const(0, 0, true), &formula);
+    let after_right_inf = mux_point(
+        builder,
+        Signal::Qubit(right.inf),
+        &point_signals(left),
+        &after_inverse,
+    );
+    let selected = mux_point(
+        builder,
+        Signal::Qubit(left.inf),
+        &point_signals(right),
+        &after_right_inf,
+    );
+    copy_point(builder, selected, out);
+
+    builder.append_reverse_tape(&compute_tape);
+    for field in [
+        y_sum,
+        add_num,
+        add_den,
+        add_den_inv,
+        lambda_add,
+        x_squared,
+        double_num,
+        double_den,
+        double_den_inv,
+        lambda_double,
+        lambda,
+        lambda_squared,
+        x_minus_left,
+        x3,
+        left_x_minus_x3,
+        lambda_times_delta,
+        y3,
+    ] {
+        builder.release_hold_qubits(field);
+    }
+}
+
+fn point_neg_xor(builder: &mut Builder<impl OpSink>, point: &PointRegister, out: &PointRegister) {
+    builder.xor_bits_into(&point.x, &out.x);
+    let neg_y = builder.sub_mod(
+        &const_bits(0, WIDTH),
+        &qubit_signals(&point.y),
+        FIELD_MODULUS,
+    );
+    builder.finish_segment(
+        vec![(neg_y, out.y.clone())],
+        vec![(Signal::Qubit(point.inf), out.inf)],
+    );
+}
+
+fn point_power_of_two_xor(
+    builder: &mut Builder<impl OpSink>,
+    point: &PointRegister,
+    bit: usize,
+    out: &PointRegister,
+) {
+    if bit == 0 {
+        xor_point_into(builder, point, out);
+        return;
+    }
+
+    let intermediates: Vec<PointRegister> = (0..bit).map(|_| hold_point(builder)).collect();
+    let compute_tape = builder.record(|builder| {
+        point_double_xor(builder, point, &intermediates[0]);
+        for index in 1..bit {
+            point_double_xor(builder, &intermediates[index - 1], &intermediates[index]);
+        }
+    });
+    xor_point_into(builder, &intermediates[bit - 1], out);
+    builder.append_reverse_tape(&compute_tape);
+    for point in intermediates {
+        release_point(builder, point);
+    }
+}
+
+fn xor_selected_point(
+    builder: &mut Builder<impl OpSink>,
+    selector: QubitId,
+    when_true: &PointRegister,
+    when_false: &PointRegister,
+    target: &PointRegister,
+) {
+    let selected = mux_point(
+        builder,
+        Signal::Qubit(selector),
+        &point_signals(when_true),
+        &point_signals(when_false),
+    );
+    copy_point(builder, selected, target);
+}
+
 fn controlled_add_assign(
     builder: &mut Builder<impl OpSink>,
     acc: &PointRegister,
     addend: &PointRegister,
-    selector: Signal,
-    tmp: &PointRegister,
+    selector: QubitId,
 ) {
-    let acc_before = held_point(acc);
-    let addend_value = held_point(addend);
-    let sum = point_add(builder, &acc_before, &addend_value);
-    let next = mux_point(builder, selector.clone(), &sum, &acc_before);
-    copy_point(builder, next, tmp);
+    let sum = hold_point(builder);
+    let tmp = hold_point(builder);
+    let neg_addend = hold_point(builder);
 
-    swap_points(builder, acc, tmp);
+    point_add_xor(builder, acc, addend, &sum);
+    xor_selected_point(builder, selector, &sum, acc, &tmp);
+    point_add_xor(builder, acc, addend, &sum);
 
-    let acc_after = held_point(acc);
-    let addend_value = held_point(addend);
-    let neg_addend = point_neg(builder, &addend_value);
-    let previous_if_added = point_add(builder, &acc_after, &neg_addend);
-    let previous = mux_point(builder, selector, &previous_if_added, &acc_after);
-    copy_point(builder, previous, tmp);
+    swap_points(builder, acc, &tmp);
+
+    point_neg_xor(builder, addend, &neg_addend);
+    point_add_xor(builder, acc, &neg_addend, &sum);
+    xor_selected_point(builder, selector, &sum, acc, &tmp);
+    point_add_xor(builder, acc, &neg_addend, &sum);
+    point_neg_xor(builder, addend, &neg_addend);
+
+    release_point(builder, neg_addend);
+    release_point(builder, tmp);
+    release_point(builder, sum);
 }
 
 fn scalar_mul_into(
     builder: &mut Builder<impl OpSink>,
-    scalar: &[Signal],
-    point: &PointValue,
+    scalar: &[QubitId],
+    point: &PointRegister,
     out: &PointRegister,
     multiple: &PointRegister,
-    tmp: &PointRegister,
 ) {
-    builder.finish_segment(Vec::new(), vec![(Signal::Const(true), out.inf)]);
+    builder.toggle(out.inf);
     for bit in 0..WIDTH {
-        let multiple_value = point_power_of_two(builder, point, bit);
-        copy_point(builder, multiple_value.clone(), multiple);
-        controlled_add_assign(builder, out, multiple, bit_at(scalar, bit), tmp);
-        copy_point(builder, multiple_value, multiple);
+        point_power_of_two_xor(builder, point, bit, multiple);
+        controlled_add_assign(builder, out, multiple, scalar[bit]);
+        point_power_of_two_xor(builder, point, bit, multiple);
     }
 }
 
@@ -239,73 +415,41 @@ pub fn build_into<S: OpSink>(sink: S) -> S {
     builder.declare_qubit_register(&ry);
     builder.declare_qubit_register(&[rinf]);
 
-    let p = PointValue {
-        x: qubit_signals(&px),
-        y: qubit_signals(&py),
-        inf: Signal::Qubit(pinf),
+    let p = PointRegister {
+        x: px,
+        y: py,
+        inf: pinf,
     };
-    let q = PointValue {
-        x: qubit_signals(&qx),
-        y: qubit_signals(&qy),
-        inf: Signal::Qubit(qinf),
+    let q = PointRegister {
+        x: qx,
+        y: qy,
+        inf: qinf,
     };
-
-    let a_hold = PointRegister {
-        x: builder.hold_qubits(WIDTH),
-        y: builder.hold_qubits(WIDTH),
-        inf: builder.hold_qubits(1)[0],
-    };
-    let b_hold = PointRegister {
-        x: builder.hold_qubits(WIDTH),
-        y: builder.hold_qubits(WIDTH),
-        inf: builder.hold_qubits(1)[0],
-    };
-    let multiple = PointRegister {
-        x: builder.hold_qubits(WIDTH),
-        y: builder.hold_qubits(WIDTH),
-        inf: builder.hold_qubits(1)[0],
-    };
-    let tmp = PointRegister {
-        x: builder.hold_qubits(WIDTH),
-        y: builder.hold_qubits(WIDTH),
-        inf: builder.hold_qubits(1)[0],
-    };
-
-    let a_signals = qubit_signals(&a);
-    let a_tape = builder.record(|builder| {
-        scalar_mul_into(builder, &a_signals, &p, &a_hold, &multiple, &tmp);
-    });
-
-    let b_signals = qubit_signals(&b);
-    let b_tape = builder.record(|builder| {
-        scalar_mul_into(builder, &b_signals, &q, &b_hold, &multiple, &tmp);
-    });
-
-    let a_point = held_point(&a_hold);
-    let b_point = held_point(&b_hold);
-    let r = point_add(&mut builder, &a_point, &b_point);
-    let r_reg = PointRegister {
+    let r = PointRegister {
         x: rx,
         y: ry,
         inf: rinf,
     };
-    copy_point(&mut builder, r, &r_reg);
+
+    let a_hold = hold_point(&mut builder);
+    let b_hold = hold_point(&mut builder);
+    let multiple = hold_point(&mut builder);
+
+    let a_tape = builder.record(|builder| {
+        scalar_mul_into(builder, &a, &p, &a_hold, &multiple);
+    });
+    let b_tape = builder.record(|builder| {
+        scalar_mul_into(builder, &b, &q, &b_hold, &multiple);
+    });
+
+    point_add_xor(&mut builder, &a_hold, &b_hold, &r);
 
     builder.append_reverse_tape(&b_tape);
-    builder.release_hold_qubits(b_hold.x);
-    builder.release_hold_qubits(b_hold.y);
-    builder.release_hold_qubits(vec![b_hold.inf]);
-
     builder.append_reverse_tape(&a_tape);
-    builder.release_hold_qubits(a_hold.x);
-    builder.release_hold_qubits(a_hold.y);
-    builder.release_hold_qubits(vec![a_hold.inf]);
-    builder.release_hold_qubits(multiple.x);
-    builder.release_hold_qubits(multiple.y);
-    builder.release_hold_qubits(vec![multiple.inf]);
-    builder.release_hold_qubits(tmp.x);
-    builder.release_hold_qubits(tmp.y);
-    builder.release_hold_qubits(vec![tmp.inf]);
+
+    release_point(&mut builder, multiple);
+    release_point(&mut builder, b_hold);
+    release_point(&mut builder, a_hold);
 
     builder.finish_sink()
 }

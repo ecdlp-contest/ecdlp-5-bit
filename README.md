@@ -14,7 +14,9 @@ the circuit that dominates repeated group arithmetic.
 
 This repository follows the [ECDSA Fail](https://ecdsa.fail) baseline convention:
 
-- contestant code lives under `src/shor_oracle/`;
+- contestant code lives in `src/shor_oracle/field_arithmetic.rs`, with
+  required notes under `src/shor_oracle/memory/` and the architecture diagram
+  at `src/shor_oracle/architecture.mmd`;
 - `build_circuit` is the untrusted build stage and emits `ops.bin`;
 - `eval_circuit` is the trusted stage and never imports contestant code;
 - the trusted evaluator validates 9024 Fiat-Shamir oracle shots;
@@ -43,9 +45,10 @@ Then read README.md, benchmark.json, ./ecdlp.js, src/shor_oracle/mod.rs,
 src/shor_oracle/field_arithmetic.rs, src/shor_oracle/architecture.mmd, and
 src/shor_oracle/memory/README.md.
 
-Goal: improve the scored oracle under src/shor_oracle/ only. Do not edit the
-trusted harness, Cargo.toml, Cargo.lock, rust-toolchain, score.json, ops.bin, or
-results.tsv by hand.
+Goal: improve the scored reversible field arithmetic under
+src/shor_oracle/field_arithmetic.rs. Keep src/shor_oracle/mod.rs as the trusted
+oracle composer. Do not edit the trusted harness, Cargo.toml, Cargo.lock,
+rust-toolchain, score.json, ops.bin, or results.tsv by hand.
 
 Use repo-local build and scratch paths under .workspace/ to avoid permission
 issues. This repo already routes Cargo builds to .workspace/target. If you need
@@ -57,8 +60,9 @@ GitHub and create an API key when they are ready to submit to ecdlp.ai.
 
 Use this local loop:
 1. Run ecdlp setup if the repo is not already prepared.
-2. Modify src/shor_oracle/ and update src/shor_oracle/architecture.mmd plus
-   src/shor_oracle/memory/README.md with the approach and result.
+2. Modify src/shor_oracle/field_arithmetic.rs and update
+   src/shor_oracle/architecture.mmd plus src/shor_oracle/memory/README.md with
+   the approach and result.
 3. Run cargo fmt --check and ecdlp run --note "short description".
 4. Package with ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
 5. Run ecdlp validate before proposing submission.
@@ -78,8 +82,8 @@ ecdlp submit --watch
 
 The harness:
 
-1. builds an op stream by running the untrusted `src/shor_oracle`
-   implementation;
+1. builds an op stream by running the trusted oracle composer with the
+   submitted `src/shor_oracle/field_arithmetic.rs` implementation;
 2. validates 9024 Fiat-Shamir shots against
    `|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>`;
 3. checks oracle correctness, in-place `F_31` field-arithmetic composition,
@@ -133,7 +137,9 @@ only the oracle output and does not run hidden extra-modulus probes such as
 `field_add_kernel(F_17)` or `field_mul_kernel(F_19)`. Submissions are expected
 to implement reversible arithmetic over the five-bit `F_31` field elements.
 Enumerated point or field lookup tables are outside the contest contract even
-if they happen to pass the black-box shots.
+if they happen to pass the black-box shots. The narrowed editable code boundary
+freezes the point/scalar-multiplication composer so contenders optimize the
+field kernels rather than replacing the oracle with a point table.
 
 ### What Valid Means
 
@@ -141,8 +147,8 @@ A run is rejected if any of the following fails:
 
 - Oracle correctness: all 9024 Fiat-Shamir shots must produce the expected
   `aP + bQ` output point.
-- In-place field arithmetic composition: the submitted source must build the
-  oracle from reversible `F_31` arithmetic rather than enumerated lookup tables.
+- In-place field arithmetic composition: the submitted field-arithmetic source
+  must build reversible `F_31` kernels rather than enumerated lookup tables.
 - Input preservation: the `a`, `b`, `P`, and `Q` input registers must remain
   unchanged.
 - Phase cleanliness: no leftover global phase may remain across the simulated
@@ -152,55 +158,56 @@ A run is rejected if any of the following fails:
 
 ## Baseline
 
-The baseline is intentionally arithmetic-first. `src/shor_oracle/mod.rs` fixes
-the oracle shape: affine point-add, point-double, and double-and-add scalar
-multiplication. `src/shor_oracle/field_arithmetic.rs` provides the reversible
-`F_31` add, subtract, multiply, inverse, compare, zero-test, mux, scratch
-allocation, and compute/copy/uncompute primitives. The network computes
-`A = aP`, `B = bQ`, and `R = A+B` into scratch, copies the oracle output into
-the ABI output registers, and then runs the scratch network backward. No
-enumerated point or field lookup tables are used.
+The baseline is intentionally arithmetic-first. Trusted
+`src/shor_oracle/mod.rs` fixes the oracle shape: affine point-add,
+point-double, and double-and-add scalar multiplication.
+`src/shor_oracle/field_arithmetic.rs` provides the reversible `F_31` add,
+subtract, multiply, inverse, compare, zero-test, mux, scratch allocation, and
+compute/copy/uncompute primitives. The network computes `A = aP`, `B = bQ`,
+and `R = A+B` into bounded scratch registers, copies the oracle output into the
+ABI output registers, and then runs the scratch network backward.
 
 Current expected static shape:
 
 | Metric | Value |
 | --- | ---: |
 | Input/output qubits | 43 |
-| Arithmetic scratch | 75,188 |
-| Logical qubits | 75,231 |
-| Static CCX | 290,342 |
+| Peak scratch and intermediates | 162 |
+| Logical qubits | 205 |
+| Static CCX | 38,941,319 |
+| Emitted ops | 56,107,479 |
 
 Current full trusted eval:
 
 | Metric | Value |
 | --- | ---: |
 | Shots | 9024 OK |
-| Scored Toffoli count | 290,342 |
-| CCX | 290,342 |
+| Scored Toffoli count | 38,941,319 |
+| CCX | 38,941,319 |
 | CCZ | 0 |
-| Avg. executed Toffoli depth | 25,105 |
-| Clifford | 621,539 |
-| Qubits | 75,231 |
-| Ops | 956,311 |
-| Score | 6,422,910,636.018275 |
+| Avg. executed Toffoli depth | 37,905,856 |
+| Clifford | 10,337,118 |
+| Qubits | 205 |
+| Ops | 56,107,479 |
+| Score | 7,876,120,357.146168 |
 
 `Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count is
 the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir shots,
-matching the Google resource-estimate convention. This arithmetic baseline is
-correct and lookup-free. It uses coarse Bennett pebbling: compute a segment,
-copy its ABI or held-scratch outputs, uncompute the segment, and reuse the freed
-scratch qubits. Field arithmetic is in-place at the oracle contract level:
-computed field values are copied only into required point-output registers,
-then arithmetic scratch is uncomputed. A competitive submission should push
-scratch reuse inside scalar multiplication, which is now the peak live-qubit
-segment.
+matching the Google resource-estimate convention. The current bounded-register
+baseline uses compute/copy/uncompute segments so field arithmetic is in-place
+at the oracle contract level: computed field values are copied only into
+required point-output registers or held point registers, then arithmetic
+scratch is uncomputed. A competitive submission should reduce field-kernel
+gates without expanding live scratch.
 
 ## What You Can Edit
 
-Contestant changes should stay in:
+Contestant code changes should stay in:
 
 ```text
-src/shor_oracle/
+src/shor_oracle/field_arithmetic.rs
+src/shor_oracle/architecture.mmd
+src/shor_oracle/memory/
 ```
 
 Every submission must include a Mermaid architecture diagram at:
@@ -231,9 +238,10 @@ flowchart TD
   Target --> Optimization
 ```
 
-Use the `Algorithm` branch to show the structural decomposition of the oracle,
-and the `Optimization` branch to show search islands, structural knobs, score
-tradeoffs, and the chosen implementation.
+Use the `Algorithm` branch to show the structural decomposition of the trusted
+oracle composer and the field kernels it calls. Use the `Optimization` branch
+to show search islands, structural knobs, score tradeoffs, and the chosen field
+arithmetic implementation.
 
 As you iterate, keep Markdown notes under `src/shor_oracle/memory/` capturing
 approaches that worked, approaches that failed, and the reasoning behind
@@ -244,6 +252,7 @@ Do not change the trusted harness when comparing submissions:
 
 - `src/bin/build_circuit.rs`
 - `src/bin/eval_circuit.rs`
+- `src/shor_oracle/mod.rs`
 - `src/main.rs`
 - `src/circuit.rs`
 - `src/sim.rs`
@@ -252,9 +261,10 @@ Do not change the trusted harness when comparing submissions:
 Implementation folders:
 
 ```text
-src/shor_oracle/  scored oracle and reversible field-arithmetic implementation
-src/qft/          unscored QFT and sampling support
-src/full_shor/    future full-Shor integration layer
+src/shor_oracle/mod.rs              trusted scored oracle composer
+src/shor_oracle/field_arithmetic.rs submitted reversible field-arithmetic implementation
+src/qft/                            unscored QFT and sampling support
+src/full_shor/                      future full-Shor integration layer
 ```
 
 ## Local Workflow
@@ -283,7 +293,8 @@ package:
 
 - benchmark `shor-ecdlp-5bit`
 - validation gate `fiat_shamir_shor_ecdlp_5bit_in_place_field_arithmetic_oracle_v1`
-- editable path exactly `src/shor_oracle`
+- editable paths exactly `src/shor_oracle/field_arithmetic.rs`,
+  `src/shor_oracle/architecture.mmd`, and `src/shor_oracle/memory`
 - `src/shor_oracle/architecture.mmd` commitment
 - `ops.bin` byte/hash commitment
 - 10 KiB public note cap

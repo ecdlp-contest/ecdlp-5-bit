@@ -1,13 +1,15 @@
 {
   "schemaVersion": 1,
   "name": "shor-ecdlp-5bit",
-  "description": "Optimize the balanced logical-qubit, Toffoli-count, and Toffoli-depth score for a 5-bit Shor ECDLP oracle circuit built from reversible in-place F_31 field arithmetic.",
+  "description": "Optimize the reversible in-place F_31 field arithmetic used by the trusted 5-bit Shor ECDLP oracle composer.",
   "scoreModel": "balanced-qubit-toffoli-depth-v1",
   "scoreNote": "score = logical qubits * sqrt(rounded average executed Toffoli count * rounded average per-shot executed Toffoli depth).",
   "category": "rust",
   "direction": "-",
   "editablePaths": [
-    "src/shor_oracle"
+    "src/shor_oracle/field_arithmetic.rs",
+    "src/shor_oracle/architecture.mmd",
+    "src/shor_oracle/memory"
   ],
   "setupCommand": [
     "bash",

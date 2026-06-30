@@ -15,6 +15,10 @@ pub(crate) fn const_bits(value: u16, width: usize) -> Vec<Signal> {
         .collect()
 }
 
+fn qubit_signals(qubits: &[QubitId]) -> Vec<Signal> {
+    qubits.iter().copied().map(Signal::Qubit).collect()
+}
+
 fn inv_mod_const(value: u16, modulus: u16) -> u16 {
     let value = value % modulus;
     if value == 0 {
@@ -128,7 +132,7 @@ fn field_binary_value(kind: &FieldKind, left: u16, right: u16, modulus: u16) -> 
 
 pub(crate) struct Builder<S: OpSink> {
     sink: S,
-    recording: Option<Vec<Op>>,
+    recording: Vec<Vec<Op>>,
     free_scratch: Vec<QubitId>,
     field_cache: Vec<CachedField>,
     next_qubit: u64,
@@ -145,7 +149,7 @@ impl<S: OpSink> Builder<S> {
     pub(crate) fn with_sink(sink: S) -> Self {
         Self {
             sink,
-            recording: None,
+            recording: Vec::new(),
             free_scratch: Vec::new(),
             field_cache: Vec::new(),
             next_qubit: 0,
@@ -183,7 +187,7 @@ impl<S: OpSink> Builder<S> {
 
     fn push_op(&mut self, op: Op) {
         op.validate();
-        if let Some(recording) = &mut self.recording {
+        for recording in &mut self.recording {
             recording.push(op);
         }
         self.sink.push_op(op);
@@ -241,17 +245,99 @@ impl<S: OpSink> Builder<S> {
         }
     }
 
+    pub(crate) fn toggle(&mut self, target: QubitId) {
+        self.push_x(target);
+    }
+
+    pub(crate) fn xor_qubit_into(&mut self, control: QubitId, target: QubitId) {
+        self.push_cx(control, target);
+    }
+
+    pub(crate) fn xor_bits_into(&mut self, source: &[QubitId], target: &[QubitId]) {
+        for (&source, &target) in source.iter().zip(target) {
+            self.push_cx(source, target);
+        }
+    }
+
+    pub(crate) fn xor_add_mod_into(
+        &mut self,
+        left: &[QubitId],
+        right: &[QubitId],
+        target: &[QubitId],
+    ) {
+        self.xor_field_binary_into(FieldKind::Add, left, right, target);
+    }
+
+    pub(crate) fn xor_sub_mod_into(
+        &mut self,
+        left: &[QubitId],
+        right: &[QubitId],
+        target: &[QubitId],
+    ) {
+        self.xor_field_binary_into(FieldKind::Sub, left, right, target);
+    }
+
+    pub(crate) fn xor_mul_mod_into(
+        &mut self,
+        left: &[QubitId],
+        right: &[QubitId],
+        target: &[QubitId],
+    ) {
+        self.xor_field_binary_into(FieldKind::Mul, left, right, target);
+    }
+
+    pub(crate) fn xor_mul_const_mod_into(
+        &mut self,
+        input: &[QubitId],
+        factor: u16,
+        target: &[QubitId],
+    ) {
+        let expr = FieldExpr::Unary {
+            kind: FieldKind::MulConst(factor),
+            input: qubit_signals(input),
+            modulus: FIELD_MODULUS,
+        };
+        for (bit, &target) in target.iter().enumerate() {
+            self.xor_field_bit_uncached_into(&expr, bit, target);
+        }
+    }
+
+    pub(crate) fn xor_inv_mod_into(&mut self, input: &[QubitId], target: &[QubitId]) {
+        let expr = FieldExpr::Unary {
+            kind: FieldKind::Inv,
+            input: qubit_signals(input),
+            modulus: FIELD_MODULUS,
+        };
+        for (bit, &target) in target.iter().enumerate() {
+            self.xor_field_bit_uncached_into(&expr, bit, target);
+        }
+    }
+
+    fn xor_field_binary_into(
+        &mut self,
+        kind: FieldKind,
+        left: &[QubitId],
+        right: &[QubitId],
+        target: &[QubitId],
+    ) {
+        let expr = FieldExpr::Binary {
+            kind,
+            left: qubit_signals(left),
+            right: qubit_signals(right),
+            modulus: FIELD_MODULUS,
+        };
+        for (bit, &target) in target.iter().enumerate() {
+            self.xor_field_bit_uncached_into(&expr, bit, target);
+        }
+    }
+
     pub(crate) fn record<F>(&mut self, f: F) -> Vec<Op>
     where
         F: FnOnce(&mut Self),
     {
-        assert!(
-            self.recording.is_none(),
-            "nested op recording is unsupported"
-        );
-        self.recording = Some(Vec::new());
+        self.recording.push(Vec::new());
         f(self);
-        self.recording.take().unwrap()
+        self.recording.pop().unwrap()
     }
 
     pub(crate) fn append_reverse_tape(&mut self, tape: &[Op]) {
@@ -413,15 +499,6 @@ impl<S: OpSink> Builder<S> {
             .collect()
     }
 
-    pub(crate) fn add_mod(
-        &mut self,
-        left: &[Signal],
-        right: &[Signal],
-        modulus: u16,
-    ) -> Vec<Signal> {
-        self.field_binary_bits(FieldKind::Add, left, right, modulus)
-    }
-
     pub(crate) fn sub_mod(
         &mut self,
         left: &[Signal],
@@ -429,39 +506,6 @@ impl<S: OpSink> Builder<S> {
         modulus: u16,
     ) -> Vec<Signal> {
         self.field_binary_bits(FieldKind::Sub, left, right, modulus)
-    }
-
-    pub(crate) fn mul_const_mod(
-        &mut self,
-        input: &[Signal],
-        factor: u16,
-        modulus: u16,
-    ) -> Vec<Signal> {
-        self.field_unary_bits(FieldKind::MulConst(factor), input, modulus)
-    }
-
-    pub(crate) fn mul_mod(
-        &mut self,
-        left: &[Signal],
-        right: &[Signal],
-        modulus: u16,
-    ) -> Vec<Signal> {
-        self.field_binary_bits(FieldKind::Mul, left, right, modulus)
-    }
-
-    pub(crate) fn inv_mod(&mut self, input: &[Signal], modulus: u16) -> Vec<Signal> {
-        self.field_unary_bits(FieldKind::Inv, input, modulus)
-    }
-
-    fn field_unary_bits(&mut self, kind: FieldKind, input: &[Signal], modulus: u16) -> Vec<Signal> {
-        let expr = Rc::new(FieldExpr::Unary {
-            kind,
-            input: (0..WIDTH).map(|bit| Self::bit_at(input, bit)).collect(),
-            modulus,
-        });
-        (0..WIDTH)
-            .map(|bit| Signal::FieldBit(expr.clone(), bit))
-            .collect()
     }
 
     fn field_binary_bits(
@@ -667,7 +711,7 @@ impl<S: OpSink> Builder<S> {
 
     pub(crate) fn finish_sink(self) -> S {
         debug_assert!(self.field_cache.is_empty());
-        debug_assert!(self.recording.is_none());
+        debug_assert!(self.recording.is_empty());
         self.sink
     }
 }
