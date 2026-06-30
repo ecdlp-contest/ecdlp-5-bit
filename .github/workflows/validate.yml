@@ -9,17 +9,29 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup benchmark
-        run: bash ./setup.sh
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+          components: rustfmt
 
       - name: Format
         run: cargo fmt --check
 
-      - name: Trusted benchmark
-        run: bash ./benchmark.sh --note "ci validation"
+      - name: Check
+        run: cargo check --locked
 
-      - name: Package submission boundary
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools/package-submission.ps1 -NoteFile src/shor_oracle/memory/README.md -Model "CI"
+      - name: Unit tests
+        run: cargo test --locked --lib
+
+      - name: Contract preflight
+        run: node ./ecdlp.js preflight

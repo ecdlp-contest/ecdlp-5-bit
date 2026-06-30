@@ -16,9 +16,135 @@ const MAX_ARCHITECTURE_BYTES = 1024 * 1024;
 const REQUIRED_SHOTS = 9024;
 const SCORE_MODEL = "balanced-qubit-toffoli-depth-v1";
 const REQUIRED_ARTIFACT = "ops.bin";
-const SHOR_TARGET_LABEL = "Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks";
+const SHOR_TARGET_LABEL = "Target oracle: aP + bQ using in-place F_31 field arithmetic";
 const REQUIRED_ARCHITECTURE_LABELS = [SHOR_TARGET_LABEL, "Algorithm", "Optimization"];
 const REQUIRED_ARCHITECTURE_PATH = "src/shor_oracle/architecture.mmd";
+const FIELD_ARITHMETIC_PATH = "src/shor_oracle/field_arithmetic.rs";
+const SCALAR_STRATEGY_PATH = "src/shor_oracle/scalar_strategy.rs";
+const FIELD_ARITHMETIC_BANNED_PATTERNS = [
+  {
+    pattern: /\bQubitId\b/u,
+    message: "must not name raw QubitId values; use opaque FieldInput/FieldOutput handles"
+  },
+  {
+    pattern: /\bRegisterId\b/u,
+    message: "must not observe or construct register IDs"
+  },
+  {
+    pattern: /\bOperationType\b/u,
+    message: "must not construct primitive operations directly"
+  },
+  {
+    pattern: /\bOp\b/u,
+    message: "must not construct or inspect primitive operations directly"
+  },
+  {
+    pattern: /crate\s*::\s*circuit/u,
+    message: "must not import the raw circuit module"
+  },
+  {
+    pattern: /Signal\s*::\s*Qubit/u,
+    message: "must not manufacture signals for arbitrary qubits"
+  },
+  {
+    pattern: /\bBuilder\b/u,
+    message: "must not access the trusted oracle builder"
+  },
+  {
+    pattern: /\bunsafe\b/u,
+    message: "unsafe code is not allowed in the editable field boundary"
+  },
+  {
+    pattern: /\btransmute\b/u,
+    message: "must not inspect opaque field handles by transmutation"
+  },
+  {
+    pattern: /\bstatic\s+mut\b/u,
+    message: "must not keep mutable global state across field-kernel calls"
+  },
+  {
+    pattern: /\b(thread_local|OnceLock|LazyLock|Mutex|RwLock|Atomic[A-Za-z0-9_]*)\b/u,
+    message: "must not use global state to key behavior by call order"
+  },
+  {
+    pattern: /\b(include_bytes|include_str|std\s*::\s*fs|std\s*::\s*process|std\s*::\s*net|std\s*::\s*env)\b/u,
+    message: "must not load external data or depend on process/environment state"
+  }
+];
+const SCALAR_STRATEGY_BANNED_PATTERNS = [
+  {
+    pattern: /\bQubitId\b/u,
+    message: "must use opaque ScalarBit handles instead of raw qubits"
+  },
+  {
+    pattern: /\bRegisterId\b/u,
+    message: "must not observe or construct register IDs"
+  },
+  {
+    pattern: /\bOperationType\b/u,
+    message: "must not construct primitive operations directly"
+  },
+  {
+    pattern: /\bOp\b/u,
+    message: "must not construct or inspect primitive operations directly"
+  },
+  {
+    pattern: /crate\s*::\s*circuit/u,
+    message: "must not import the raw circuit module"
+  },
+  {
+    pattern: /crate\s*::\s*ops_io/u,
+    message: "must not import the raw op sink module"
+  },
+  {
+    pattern: /\bSignal\b/u,
+    message: "must not manufacture Boolean signals directly"
+  },
+  {
+    pattern: /\bBuilder\b/u,
+    message: "must not access the trusted oracle builder"
+  },
+  {
+    pattern: /\bPointRegister\b/u,
+    message: "must not access raw point registers"
+  },
+  {
+    pattern: /\b(point_add_xor|point_double_xor|controlled_add_assign|hold_point|release_point|copy_point|mux_point|qubit_signals)\b/u,
+    message: "must use the scalar_api handle methods instead of trusted point internals"
+  },
+  {
+    pattern: /\bsuper\s*::/u,
+    message: "must import only crate::shor_oracle::scalar_api"
+  },
+  {
+    pattern: /\b(builder|field_arithmetic)\b/u,
+    message: "must not reach around scalar_api into trusted modules"
+  },
+  {
+    pattern: /\bunsafe\b/u,
+    message: "unsafe code is not allowed in the editable scalar strategy"
+  },
+  {
+    pattern: /\btransmute\b/u,
+    message: "must not inspect opaque scalar or point handles by transmutation"
+  },
+  {
+    pattern: /\bstatic\s+mut\b/u,
+    message: "must not keep mutable global state across scalar-strategy calls"
+  },
+  {
+    pattern: /\b(thread_local|OnceLock|LazyLock|Mutex|RwLock|Atomic[A-Za-z0-9_]*)\b/u,
+    message: "must not use global state to key behavior by call order"
+  },
+  {
+    pattern: /\b(HashMap|BTreeMap|HashSet|BTreeSet)\b/u,
+    message: "table-like containers are not allowed in scalar_strategy.rs"
+  },
+  {
+    pattern: /\b(include_bytes|include_str|std\s*::\s*fs|std\s*::\s*process|std\s*::\s*net|std\s*::\s*env)\b/u,
+    message: "must not load external data or depend on process/environment state"
+  }
+];
 
 const TRACKS = {
   "point-double-secp256k1-v1": {
@@ -28,9 +154,9 @@ const TRACKS = {
     defaultNoteFile: "src/point_double/memory/README.md"
   },
   "shor-ecdlp-5bit": {
-    gate: "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle_field_arithmetic_v4",
-    editablePaths: ["src/shor_oracle"],
-    requiredChecks: ["oracle correctness", "point addition correctness", "point doubling correctness", "field addition correctness", "field subtraction correctness", "field multiplication correctness", "field inversion correctness", "affine lambda witness", "input preservation", "phase cleanliness", "ancilla cleanup"],
+    gate: "fiat_shamir_shor_ecdlp_5bit_arithmetic_strategy_oracle_v2",
+    editablePaths: ["src/shor_oracle/field_arithmetic.rs", "src/shor_oracle/scalar_strategy.rs", "src/shor_oracle/architecture.mmd", "src/shor_oracle/memory"],
+    requiredChecks: ["oracle correctness", "in-place F_31 field arithmetic composition", "restricted scalar strategy API", "input preservation", "phase cleanliness", "ancilla cleanup"],
     defaultNoteFile: "src/shor_oracle/memory/README.md",
     architectureDiagram: REQUIRED_ARCHITECTURE_PATH
   },
@@ -67,6 +193,7 @@ Usage:
 
 Commands:
   setup        Install or prepare local benchmark dependencies
+  preflight    Check the editable-source contract without trusted evaluation
   run          Build and score the local oracle implementation
   package      Create dist/submission.tar.gz and submission metadata
   validate     Check a local package against the contest contract
@@ -83,8 +210,12 @@ Help:
 
 Agent guidance:
   Read README.md and benchmark.json first. Use command-level --help before each
-  step. Contestant edits should stay under src/shor_oracle/. Do not hand-edit
-  score.json, ops.bin, results.tsv, or the trusted harness.
+  step. Contestant code edits should stay in src/shor_oracle/field_arithmetic.rs
+  and src/shor_oracle/scalar_strategy.rs.
+  Keep notes under src/shor_oracle/memory/ and update src/shor_oracle/architecture.mmd.
+  The trusted builder owns raw qubits, primitive ops, register allocation, and
+  segment boundaries.
+  Do not hand-edit score.json, ops.bin, results.tsv, or the trusted harness.
 
 Use repo-local build, cache, scratch, and tool paths under .workspace/ to avoid
 permission issues. Cargo is configured to build into .workspace/target.
@@ -105,7 +236,21 @@ checked-in Cargo config routes Rust build artifacts to .workspace/target.
 
 Start here when the repo has not been prepared on this machine. After setup,
 run:
-  ecdlp run --help`,
+  ecdlp preflight --help`,
+
+  preflight: `ecdlp preflight
+
+Usage:
+  ecdlp preflight [--manifest benchmark.json]
+  ./ecdlp.js preflight [--manifest benchmark.json]
+
+Checks the benchmark manifest, editable-path boundary, source guards, and
+architecture diagram without building ops.bin and without running the 9024-shot
+trusted evaluator.
+
+Use this for cheap local and pull-request validation. It is not a submission
+validator; submission candidates still need ecdlp run, ecdlp package, and ecdlp
+validate after the trusted evaluator passes all 9024 Fiat-Shamir shots.`,
 
   run: `ecdlp run
 
@@ -122,7 +267,9 @@ Build artifacts should stay under .workspace/target. Put any extra scratch
 outputs or generated experiments under .workspace/ so they remain ignored by
 git and avoid system permission issues.
 
-Use this after modifying src/shor_oracle/. A valid run must pass all 9024
+Use this after modifying src/shor_oracle/field_arithmetic.rs,
+src/shor_oracle/scalar_strategy.rs, or their notes/diagram.
+A valid run must pass all 9024
 Fiat-Shamir shots and produce score.json with status "ranked".
 
 This command is local and does not require an API key.`,
@@ -186,8 +333,8 @@ Options:
 
 Before submitting:
   1. Run ecdlp validate.
-  2. Make sure src/shor_oracle/memory/README.md explains the approach.
-  3. Make sure src/shor_oracle/architecture.mmd matches the submitted oracle.`,
+  2. Make sure src/shor_oracle/memory/README.md explains the field-kernel and scalar-schedule approach.
+  3. Make sure src/shor_oracle/architecture.mmd matches the submitted arithmetic implementation.`,
 
   login: `ecdlp login
 
@@ -559,6 +706,55 @@ function assertArchitectureDiagram(spec) {
   if (errors.length > 0) throw new Error(errors[0]);
 }
 
+function firstLineMatching(text, pattern) {
+  const lines = text.split(/\r?\n/u);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (pattern.test(lines[i])) {
+      pattern.lastIndex = 0;
+      return i + 1;
+    }
+    pattern.lastIndex = 0;
+  }
+  return 1;
+}
+
+function sourceBoundaryErrors(sourcePath, bannedPatterns) {
+  const absolutePath = path.resolve(sourcePath);
+  if (!fs.existsSync(absolutePath)) return [`${sourcePath} is required`];
+  const stat = fs.statSync(absolutePath);
+  if (!stat.isFile()) return [`${sourcePath} must be a file`];
+  const text = fs.readFileSync(absolutePath, "utf8");
+  const errors = [];
+  for (const { pattern, message } of bannedPatterns) {
+    if (pattern.test(text)) {
+      const line = firstLineMatching(text, pattern);
+      errors.push(`${sourcePath}:${line}: ${message}`);
+      pattern.lastIndex = 0;
+    }
+  }
+  return errors;
+}
+
+function fieldArithmeticSourceErrors() {
+  return sourceBoundaryErrors(FIELD_ARITHMETIC_PATH, FIELD_ARITHMETIC_BANNED_PATTERNS);
+}
+
+function scalarStrategySourceErrors() {
+  return sourceBoundaryErrors(SCALAR_STRATEGY_PATH, SCALAR_STRATEGY_BANNED_PATTERNS);
+}
+
+function editableSourceBoundaryErrors() {
+  return [
+    ...fieldArithmeticSourceErrors(),
+    ...scalarStrategySourceErrors()
+  ];
+}
+
+function assertEditableSourceBoundary() {
+  const errors = editableSourceBoundaryErrors();
+  if (errors.length > 0) throw new Error(errors[0]);
+}
+
 function utf8Bytes(text) {
   return Buffer.byteLength(text, "utf8");
 }
@@ -573,8 +769,7 @@ function scoresMatch(left, right) {
   return Math.abs(left - right) <= Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 8;
 }
 
-function packageSubmission(args) {
-  const manifest = repoManifest(getFlag(args, "--manifest", "benchmark.json"));
+function assertEditableManifestContract(manifest) {
   const spec = TRACKS[manifest.name];
   if (manifest.scoreModel !== SCORE_MODEL) throw new Error(`benchmark.json scoreModel must be ${SCORE_MODEL}`);
   if (manifest.scorePath !== "score.json") throw new Error("benchmark.json scorePath must be score.json");
@@ -588,6 +783,23 @@ function packageSubmission(args) {
     if (!fs.existsSync(path.resolve(editablePath))) throw new Error(`editable path does not exist: ${editablePath}`);
   }
   assertArchitectureDiagram(spec);
+  assertEditableSourceBoundary();
+  return { spec, editablePaths };
+}
+
+function preflight(args) {
+  const manifest = repoManifest(getFlag(args, "--manifest", "benchmark.json"));
+  const { spec, editablePaths } = assertEditableManifestContract(manifest);
+  console.log("Preflight OK");
+  console.log(`Benchmark: ${manifest.name}`);
+  console.log(`Validation gate: ${spec.gate}`);
+  console.log(`Editable paths: ${editablePaths.join(", ")}`);
+  console.log(`Trusted shots: reserved for submission validation (${REQUIRED_SHOTS})`);
+}
+
+function packageSubmission(args) {
+  const manifest = repoManifest(getFlag(args, "--manifest", "benchmark.json"));
+  const { spec, editablePaths } = assertEditableManifestContract(manifest);
   const architecturePath = spec.architectureDiagram;
   const architectureBytes = fs.statSync(path.resolve(architecturePath)).size;
   const architectureSha256 = sha256File(path.resolve(architecturePath));
@@ -735,6 +947,12 @@ function validatePackage(metadata, options = {}) {
 
   for (const message of architectureDiagramErrors(spec, options.metadataPath || null, metadata)) {
     error("PACKAGE_ARCHITECTURE_DIAGRAM", message);
+  }
+  for (const message of fieldArithmeticSourceErrors()) {
+    error("FIELD_ARITHMETIC_BOUNDARY", message);
+  }
+  for (const message of scalarStrategySourceErrors()) {
+    error("SCALAR_STRATEGY_BOUNDARY", message);
   }
   for (const message of archivePackageErrors(spec, options.metadataPath || null, metadata)) {
     error("PACKAGE_ARCHIVE", message);
@@ -985,6 +1203,7 @@ async function main() {
   if (isHelpFlag(first)) usage(0, command);
 
   if (command === "setup") return runManifestCommand("setupCommand");
+  if (command === "preflight") return preflight(args);
   if (command === "run") return runManifestCommand("benchmarkCommand", args);
   if (command === "package") return packageSubmission(args);
   if (command === "validate") {

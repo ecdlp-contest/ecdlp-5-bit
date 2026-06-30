@@ -14,7 +14,10 @@ the circuit that dominates repeated group arithmetic.
 
 This repository follows the [ECDSA Fail](https://ecdsa.fail) baseline convention:
 
-- contestant code lives under `src/shor_oracle/`;
+- contestant code lives in `src/shor_oracle/field_arithmetic.rs` and
+  `src/shor_oracle/scalar_strategy.rs`, with required notes under
+  `src/shor_oracle/memory/` and the architecture diagram at
+  `src/shor_oracle/architecture.mmd`;
 - `build_circuit` is the untrusted build stage and emits `ops.bin`;
 - `eval_circuit` is the trusted stage and never imports contestant code;
 - the trusted evaluator validates 9024 Fiat-Shamir oracle shots;
@@ -34,34 +37,46 @@ Use the CLI help to learn the workflow before acting:
 
 ecdlp --help
 ecdlp setup --help
+ecdlp preflight --help
 ecdlp run --help
 ecdlp package --help
 ecdlp validate --help
 ecdlp submit --help
 
-Then read README.md, benchmark.json, ./ecdlp.js,
-src/shor_oracle/mod.rs, src/shor_oracle/architecture.mmd, and
-src/shor_oracle/memory/README.md.
+Then read README.md, benchmark.json, ./ecdlp.js, src/shor_oracle/mod.rs,
+src/shor_oracle/builder.rs, src/shor_oracle/scalar_api.rs,
+src/shor_oracle/field_arithmetic.rs, src/shor_oracle/scalar_strategy.rs,
+src/shor_oracle/architecture.mmd, and src/shor_oracle/memory/README.md.
 
-Goal: improve the scored oracle under src/shor_oracle/ only. Do not edit the
-trusted harness, Cargo.toml, Cargo.lock, rust-toolchain, score.json, ops.bin, or
-results.tsv by hand.
+Goal: improve the scored reversible field arithmetic under
+src/shor_oracle/field_arithmetic.rs and the scalar point-power schedule under
+src/shor_oracle/scalar_strategy.rs. Keep src/shor_oracle/mod.rs,
+src/shor_oracle/scalar_api.rs, and src/shor_oracle/builder.rs as trusted oracle
+infrastructure. Do not edit the trusted harness, Cargo.toml, Cargo.lock,
+rust-toolchain, score.json, ops.bin, or results.tsv by hand.
 
 Use repo-local build and scratch paths under .workspace/ to avoid permission
 issues. This repo already routes Cargo builds to .workspace/target. If you need
 extra caches, generated probes, temporary files, or tool downloads, put them
 under .workspace/ and do not rely on system/global writable directories.
+When running Cargo directly, set CARGO_TARGET_DIR and temporary directories to
+repo-local .workspace paths as shown in the Local Workflow section.
 
 Local work does not require an API key. The user only needs to sign in with
 GitHub and create an API key when they are ready to submit to ecdlp.ai.
 
 Use this local loop:
 1. Run ecdlp setup if the repo is not already prepared.
-2. Modify src/shor_oracle/ and update src/shor_oracle/architecture.mmd plus
-   src/shor_oracle/memory/README.md with the approach and result.
-3. Run cargo fmt --check and ecdlp run --note "short description".
-4. Package with ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
-5. Run ecdlp validate before proposing submission.
+2. Modify src/shor_oracle/field_arithmetic.rs and/or
+   src/shor_oracle/scalar_strategy.rs, then update
+   src/shor_oracle/architecture.mmd plus src/shor_oracle/memory/README.md with
+   the approach and result.
+3. Run cargo fmt --check and ecdlp preflight for cheap local and PR contract
+   validation.
+4. Run ecdlp run --note "short description" only when validating a score or
+   submission candidate.
+5. Package with ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
+6. Run ecdlp validate before proposing submission.
 
 A valid submission must beat the current best score, preserve the documented
 oracle ABI, pass all 9024 trusted shots, include the Mermaid architecture
@@ -78,12 +93,14 @@ ecdlp submit --watch
 
 The harness:
 
-1. builds an op stream by running the untrusted `src/shor_oracle`
-   implementation;
+1. builds an op stream by running the trusted oracle composer with the
+   submitted `src/shor_oracle/field_arithmetic.rs` implementation and
+   `src/shor_oracle/scalar_strategy.rs` schedule;
 2. validates 9024 Fiat-Shamir shots against
-   `|a>|b>|P>|Q>|field inputs>|0> -> |a>|b>|P>|Q>|field inputs>|aP + bQ>|P+Q>|2P>|field witnesses>`;
-3. checks point addition, point doubling, selector-based `F_31`, `F_13`, and `F_11` field arithmetic
-   witnesses, input preservation, phase cleanliness, and ancilla cleanup;
+   `|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>`;
+3. checks oracle correctness, in-place `F_31` field-arithmetic composition,
+   restricted scalar-strategy API use, input preservation, phase cleanliness,
+   and ancilla cleanup;
 4. scores the run as logical qubits times the square root of rounded average
    executed Toffoli count times rounded average per-shot executed Toffoli depth.
 
@@ -114,30 +131,12 @@ register 7: input Q infinity flag (1 qubit, preserved)
 register 8: output R.x            (5 qubits, initially zero)
 register 9: output R.y            (5 qubits, initially zero)
 register 10: output R infinity flag (1 qubit, initially zero)
-register 11: output (P+Q).x       (5 qubits, initially zero)
-register 12: output (P+Q).y       (5 qubits, initially zero)
-register 13: output (P+Q) infinity flag (1 qubit, initially zero)
-register 14: output (2P).x        (5 qubits, initially zero)
-register 15: output (2P).y        (5 qubits, initially zero)
-register 16: output (2P) infinity flag (1 qubit, initially zero)
-register 17: field selector          (2 qubits, preserved; 0=F_31, 1=F_13, 2=F_11)
-register 18: field input x1          (5 qubits, preserved)
-register 19: field input y1          (5 qubits, preserved)
-register 20: field input x2          (5 qubits, preserved)
-register 21: field input y2          (5 qubits, preserved)
-register 22: field output x1+x2      (5 qubits, initially zero)
-register 23: field output den=x2-x1  (5 qubits, initially zero)
-register 24: field output num=y2-y1  (5 qubits, initially zero)
-register 25: field output x1*y2      (5 qubits, initially zero)
-register 26: field output den^-1, or 0 if den=0 (5 qubits, initially zero)
-register 27: field output lambda=num/den, or 0 if den=0 (5 qubits, initially zero)
-register 28: field output lambda*den (5 qubits, initially zero)
 ```
 
 The oracle must compute:
 
 ```text
-|a>|b>|P>|Q>|field inputs>|0> -> |a>|b>|P>|Q>|field inputs>|aP + bQ>|P+Q>|2P>|field witnesses>
+|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>
 ```
 
 Raw 5-bit scalar inputs are interpreted modulo the group order `21`, so the bit
@@ -145,20 +144,18 @@ pattern `21` is treated as scalar `0`. The trusted evaluator supplies valid
 group points `P = sB` and `Q = tB` after the circuit is built, where `B` is the
 sampler base point above.
 
-The field-arithmetic validation registers are independent of the 5-bit curve
-oracle. The trusted evaluator samples selector-driven values in `F_31`, `F_13`,
-and `F_11`, including edge cases outside the order-21 subgroup shortcut, and
-checks each selected field:
-
-```text
-sum = x1 + x2 mod p
-den = x2 - x1 mod p
-num = y2 - y1 mod p
-product = x1 * y2 mod p
-den_inv = den^-1 mod p, or 0 when den = 0
-lambda = num * den_inv mod p, or 0 when den = 0
-lambda_den = lambda * den mod p
-```
+The scored ABI intentionally has no hidden field-test registers. The only field
+in the scored circuit is the curve field `F_31`; the trusted evaluator checks
+only the oracle output and does not run hidden extra-modulus probes such as
+`field_add_kernel(F_17)` or `field_mul_kernel(F_19)`. Submissions are expected
+to implement reversible arithmetic over the five-bit `F_31` field elements.
+Point-level lookup tables are outside the contest contract even if they happen
+to pass the black-box shots. The editable code boundary gives
+`field_arithmetic.rs` only opaque per-field operands and targets and gives
+`scalar_strategy.rs` only opaque scalar-bit and point handles. Contenders may
+choose how to store, recompute, and clear arithmetic point powers, but they
+cannot select from point tables, inspect public point registers, or emit raw
+gates.
 
 ### What Valid Means
 
@@ -166,14 +163,18 @@ A run is rejected if any of the following fails:
 
 - Oracle correctness: all 9024 Fiat-Shamir shots must produce the expected
   `aP + bQ` output point.
-- Point addition correctness: the `(P+Q)` output registers must match the
-  elliptic-curve addition formula.
-- Point doubling correctness: the `(2P)` output registers must match the
-  elliptic-curve tangent formula.
-- Field arithmetic correctness: all selected `F_31`, `F_13`, and `F_11` witness outputs must satisfy the
-  trusted add, subtract, multiply, inverse, and affine-lambda equations.
-- Input preservation: the `a`, `b`, `P`, `Q`, `x1`, `y1`, `x2`, and `y2` input
-  registers must remain unchanged.
+- In-place field arithmetic composition: the submitted field-arithmetic source
+  must stay inside the opaque field-kernel facade. It must not import raw qubit
+  IDs, raw circuit ops, the trusted builder, unsafe code, mutable global state,
+  external data, or process/environment state.
+- Restricted scalar strategy API: the submitted scalar-strategy source may call
+  only the opaque `scalar_api` methods for allocating scratch points, computing
+  arithmetic doubles, and applying controlled adds. It must not import raw
+  qubits, point registers, trusted point internals, table-like containers,
+  unsafe code, mutable global state, external data, or process/environment
+  state.
+- Input preservation: the `a`, `b`, `P`, and `Q` input registers must remain
+  unchanged.
 - Phase cleanliness: no leftover global phase may remain across the simulated
   shot batch.
 - Ancilla cleanup: every non-register qubit must end in zero after the oracle
@@ -181,49 +182,84 @@ A run is rejected if any of the following fails:
 
 ## Baseline
 
-The baseline in `src/shor_oracle/mod.rs` is intentionally direct: it emits a
-reversible table baseline that computes `A = aP`, `B = bQ`, then `R = A+B`,
-also writing the explicit `P+Q`, `2P`, and `F_31`, `F_13`, and `F_11` field-witness check outputs
-before uncomputing scratch. This gives the contest a legitimate variable-base
-Shor ECDLP oracle component before replacing the tables with prime field
-arithmetic and adding QFT/sampling machinery.
+The baseline is intentionally arithmetic-first. Trusted
+`src/shor_oracle/mod.rs` fixes the oracle shape and affine point formulas.
+Editable `src/shor_oracle/scalar_strategy.rs` dynamically precomputes `2P`,
+`4P`, `8P`, and `16P` for each input point, uses those point powers for the
+controlled scalar-add steps, and uncomputes the chain in reverse through the
+trusted opaque scalar API. Trusted
+`src/shor_oracle/builder.rs` owns register allocation, scratch allocation,
+segment boundaries, primitive op emission, and compute/copy/uncompute mechanics.
+`src/shor_oracle/field_arithmetic.rs` provides the reversible `F_31` add,
+subtract, multiply, and inverse kernels through an opaque field-only emitter.
+The network computes `A = aP`, `B = bQ`, and `R = A+B` into bounded scratch
+registers, copies the oracle output into the ABI output registers, and then runs
+the scratch network backward.
 
-Current expected static shape:
+Current expected static shape for the table-free field-circuit baseline:
 
 | Metric | Value |
 | --- | ---: |
-| Input/output qubits | 127 |
-| Lookup scratch | 49 |
-| Logical qubits | 176 |
-| Static CCX | 248,013 |
+| Input/output qubits | 43 |
+| Peak scratch and intermediates | 276 |
+| Logical qubits | 319 |
+| Static CCX | 143,435,925 |
+| Emitted ops | 209,409,729 |
 
-Current full trusted eval:
+Current full trusted eval, measured with `ECDLP_EVAL_THREADS=8`:
 
 | Metric | Value |
 | --- | ---: |
 | Shots | 9024 OK |
-| Scored Toffoli count | 248,013 |
-| CCX | 248,013 |
+| Scored Toffoli count | 143,435,925 |
+| CCX | 143,435,925 |
 | CCZ | 0 |
-| Avg. executed Toffoli depth | 129,909 |
-| Clifford | 28,920 |
-| Qubits | 176 |
-| Ops | 434,550 |
-| Score | 31,591,446.412397645 |
+| Avg. executed Toffoli depth | 116,796,825 |
+| Clifford | 55,900,618 |
+| Qubits | 319 |
+| Ops | 209,409,729 |
+| Score | 41,289,076,650.6699 |
 
-`Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count
-is the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir
-shots, matching the Google resource-estimate convention. In this baseline the
-emitted and executed counts are equal because every shot executes the same CCX
-sequence; a future conditional circuit may emit more gates than it executes on
-average.
+Practical system requirements for this table-free baseline:
+
+| Requirement | Observed / Recommended |
+| --- | --- |
+| Eval memory | Not re-measured; the prior 422M-op artifact peaked at about 22.1 GiB working set |
+| Recommended RAM | 64 GiB for OS and toolchain headroom |
+| 32 GiB machines | Not recommended for full trusted eval |
+| Eval parallelism | Set `ECDLP_EVAL_THREADS=8` for the measured run |
+| Observed CPU use | About seven effective cores during the 8-worker run |
+| Observed build time | About 30 seconds wall-clock on a 24-logical-processor host; the release compile portion reported 2.86 seconds |
+| Observed eval time | About 7 minutes wall-clock on a 24-logical-processor host; this was not measured with `Measure-Command` |
+| Timestamp span | About 10 minutes 37 seconds from final `ops.bin` write to `score.json` write, including handoff/command overhead |
+| Artifact size | `ops.bin` was 374,415,882 bytes in compressed format |
+
+This explicit-arithmetic baseline is intentionally conservative for the
+no-table audit, but it is heavy for contest iteration. The compact contest
+contract should distinguish field-kernel implementation from forbidden
+point/scalar/oracle lookup tables if fast local validation is a priority.
+
+`Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count is
+the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir shots,
+matching the Google resource-estimate convention. The current baseline uses
+compute/copy/uncompute segments so field arithmetic is in-place at the oracle
+contract level: computed field values are copied only into required point-output
+registers or held point registers, then arithmetic scratch is uncomputed. The
+trusted builder expands field operations into reversible add/subtract circuits,
+cyclic-shift multiplication over the Mersenne modulus, and an exponentiation
+chain for inverse; it does not synthesize field kernels from enumerated
+truth tables. A competitive submission should reduce field-kernel gates without
+turning the point/scalar layer into a lookup oracle.
 
 ## What You Can Edit
 
-Contestant changes should stay in:
+Contestant code changes should stay in:
 
 ```text
-src/shor_oracle/
+src/shor_oracle/field_arithmetic.rs
+src/shor_oracle/scalar_strategy.rs
+src/shor_oracle/architecture.mmd
+src/shor_oracle/memory/
 ```
 
 Every submission must include a Mermaid architecture diagram at:
@@ -237,7 +273,7 @@ optimization perspectives. It must be at most 1 MiB and include these exact
 top-level anchor labels:
 
 ```text
-Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks
+Target oracle: aP + bQ using in-place F_31 field arithmetic
 Algorithm
 Optimization
 ```
@@ -246,7 +282,7 @@ The target anchor must branch to the two explanation anchors:
 
 ```mermaid
 flowchart TD
-  Target["Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks"]
+  Target["Target oracle: aP + bQ using in-place F_31 field arithmetic"]
   Algorithm["Algorithm"]
   Optimization["Optimization"]
 
@@ -254,9 +290,10 @@ flowchart TD
   Target --> Optimization
 ```
 
-Use the `Algorithm` branch to show the structural decomposition of the oracle,
-and the `Optimization` branch to show search islands, structural knobs, score
-tradeoffs, and the chosen implementation.
+Use the `Algorithm` branch to show the structural decomposition of the trusted
+oracle composer and the field kernels it calls. Use the `Optimization` branch
+to show search islands, structural knobs, score tradeoffs, and the chosen field
+arithmetic implementation.
 
 As you iterate, keep Markdown notes under `src/shor_oracle/memory/` capturing
 approaches that worked, approaches that failed, and the reasoning behind
@@ -267,6 +304,7 @@ Do not change the trusted harness when comparing submissions:
 
 - `src/bin/build_circuit.rs`
 - `src/bin/eval_circuit.rs`
+- `src/shor_oracle/mod.rs`
 - `src/main.rs`
 - `src/circuit.rs`
 - `src/sim.rs`
@@ -275,9 +313,13 @@ Do not change the trusted harness when comparing submissions:
 Implementation folders:
 
 ```text
-src/shor_oracle/  scored oracle implementation; current submission boundary
-src/qft/          unscored QFT and sampling support
-src/full_shor/    future full-Shor integration layer
+src/shor_oracle/mod.rs              trusted scored oracle composer
+src/shor_oracle/scalar_api.rs       trusted opaque scalar-scheduling facade
+src/shor_oracle/builder.rs          trusted builder, op emitter, and field facade
+src/shor_oracle/field_arithmetic.rs submitted reversible field-arithmetic implementation
+src/shor_oracle/scalar_strategy.rs  submitted scalar point-power schedule
+src/qft/                            unscored QFT and sampling support
+src/full_shor/                      future full-Shor integration layer
 ```
 
 ## Local Workflow
@@ -293,20 +335,69 @@ ecdlp run --note "short description"
 The evaluator writes `ops.bin`, `score.json`, and `results.tsv`. These are
 generated benchmark artifacts; do not hand-edit them.
 
+### Permission-Safe Local Build
+
+Keep Cargo outputs and temporary files inside `.workspace/`. This avoids
+permission and application-control failures from external temp or target
+directories.
+
+PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force .workspace\target, .workspace\tmp | Out-Null
+$env:CARGO_TARGET_DIR = (Resolve-Path .workspace\target).Path
+$env:TMP = (Resolve-Path .workspace\tmp).Path
+$env:TEMP = (Resolve-Path .workspace\tmp).Path
+cargo build --locked --release --bin build_circuit --bin eval_circuit
+$env:ECDLP_EVAL_THREADS = "8"
+cargo run --locked --release --bin eval_circuit
+```
+
+Bash:
+
+```bash
+mkdir -p .workspace/target .workspace/tmp
+export CARGO_TARGET_DIR="$PWD/.workspace/target"
+export TMPDIR="$PWD/.workspace/tmp"
+cargo build --locked --release --bin build_circuit --bin eval_circuit
+ECDLP_EVAL_THREADS=8 cargo run --locked --release --bin eval_circuit
+```
+
+The expected local binary paths are:
+
+```text
+.workspace/target/release/build_circuit
+.workspace/target/release/eval_circuit
+```
+
 For a submission candidate:
 
 ```bash
 cargo fmt --check
+ecdlp preflight
+ecdlp run --note "short description"
 ecdlp package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
 ecdlp validate
 ```
+
+Pull requests should use the cheap preflight path (`cargo fmt --check`,
+`cargo check --locked`, `cargo test --locked --lib`, and `ecdlp preflight`).
+The full 9024-shot trusted evaluator is reserved for validating score claims
+and submission packages.
 
 The package helper enforces the official boundary before the server sees the
 package:
 
 - benchmark `shor-ecdlp-5bit`
-- validation gate `fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle_field_arithmetic_v4`
-- editable path exactly `src/shor_oracle`
+- validation gate `fiat_shamir_shor_ecdlp_5bit_arithmetic_strategy_oracle_v2`
+- editable paths exactly `src/shor_oracle/field_arithmetic.rs`,
+  `src/shor_oracle/scalar_strategy.rs`, `src/shor_oracle/architecture.mmd`, and
+  `src/shor_oracle/memory`
+- field-arithmetic source guard forbidding raw qubits, raw ops, trusted-builder
+  access, unsafe code, mutable global state, external data, and process state
+- scalar-strategy source guard forbidding raw qubits, raw ops, raw point
+  registers, trusted point internals, table-like containers, unsafe code,
+  mutable global state, external data, and process state
 - `src/shor_oracle/architecture.mmd` commitment
 - `ops.bin` byte/hash commitment
 - 10 KiB public note cap

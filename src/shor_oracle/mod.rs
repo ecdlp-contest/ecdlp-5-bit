@@ -1,532 +1,368 @@
-//! Contestant-editable baseline for the 5-bit Shor ECDLP variable-base oracle.
+//! Low-qubit reversible composition for the 5-bit Shor ECDLP variable-base
+//! oracle.
 //!
-//! The circuit ABI is:
-//!
-//! register 0: scalar a, 5 qubits, preserved
-//! register 1: scalar b, 5 qubits, preserved
-//! register 2: input P.x, 5 qubits, preserved
-//! register 3: input P.y, 5 qubits, preserved
-//! register 4: input P infinity flag, 1 qubit, preserved
-//! register 5: input Q.x, 5 qubits, preserved
-//! register 6: input Q.y, 5 qubits, preserved
-//! register 7: input Q infinity flag, 1 qubit, preserved
-//! register 8: output R.x, 5 qubits, initially zero
-//! register 9: output R.y, 5 qubits, initially zero
-//! register 10: output R infinity flag, 1 qubit, initially zero
-//! register 11: output (P+Q).x, 5 qubits, initially zero
-//! register 12: output (P+Q).y, 5 qubits, initially zero
-//! register 13: output (P+Q) infinity flag, 1 qubit, initially zero
-//! register 14: output (2P).x, 5 qubits, initially zero
-//! register 15: output (2P).y, 5 qubits, initially zero
-//! register 16: output (2P) infinity flag, 1 qubit, initially zero
-//! register 17: field selector, 2 qubits, preserved (0=F_31, 1=F_13, 2=F_11)
-//! register 18: field input x1, 5 qubits, preserved
-//! register 19: field input y1, 5 qubits, preserved
-//! register 20: field input x2, 5 qubits, preserved
-//! register 21: field input y2, 5 qubits, preserved
-//! register 22: field output x1+x2, 5 qubits, initially zero
-//! register 23: field output denominator x2-x1, 5 qubits, initially zero
-//! register 24: field output numerator y2-y1, 5 qubits, initially zero
-//! register 25: field output x1*y2, 5 qubits, initially zero
-//! register 26: field output (x2-x1)^-1 or 0, 5 qubits, initially zero
-//! register 27: field output lambda=(y2-y1)/(x2-x1) or 0, 5 qubits, initially zero
-//! register 28: field output lambda*(x2-x1), 5 qubits, initially zero
-//!
-//! The oracle computes:
-//!
-//! ```text
-//! |a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>
-//! ```
-//!
-//! for valid group points `P` and `Q` on `y^2 = x^3 + 7 mod 31`. The trusted
-//! evaluator chooses both points after the circuit is built.
-//!
-//! This baseline is table-driven:
-//!
-//! 1. compute scratch `A = aP`
-//! 2. compute scratch `B = bQ`
-//! 3. compute output `R = A + B`
-//! 4. compute the explicit point-operation checks `P+Q` and `2P`
-//! 5. uncompute `B` and `A`
-//!
-//! It is intentionally simple and CCX-heavy so contenders can replace the
-//! tables with arithmetic.
+//! The circuit still computes the scored oracle over `F_31`:
+//! `|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>`.
 
-use crate::circuit::{Op, OperationType, QubitId, RegisterId};
+use crate::circuit::{Op, QubitId};
+use crate::ops_io::{OpSink, VecOpSink};
 
-pub const FIELD_MODULUS: u16 = 31;
-pub const FIELD_SELECTOR_WIDTH: usize = 2;
-pub const FIELD_TEST_WIDTH: usize = 5;
-pub const FIELD_SPECS: [(u16, u16); 3] = [(0, 31), (1, 13), (2, 11)];
-pub const CURVE_A: u16 = 0;
-pub const GROUP_ORDER: u16 = 21;
-pub const WIDTH: usize = 5;
+mod builder;
+mod field_arithmetic;
+mod scalar_api;
+mod scalar_strategy;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Point {
-    x: u16,
-    y: u16,
-    infinity: bool,
+use builder::{const_bits, Builder, Signal, FIELD_MODULUS, WIDTH};
+
+#[derive(Clone)]
+struct PointValue {
+    x: Vec<Signal>,
+    y: Vec<Signal>,
+    inf: Signal,
 }
 
-const BASE_POINT: Point = Point {
-    x: 1,
-    y: 15,
-    infinity: false,
-};
-
-struct Builder {
-    ops: Vec<Op>,
-    next_qubit: u64,
-    next_register: u64,
-}
-
-impl Builder {
-    fn new() -> Self {
-        Self {
-            ops: Vec::new(),
-            next_qubit: 0,
-            next_register: 0,
-        }
-    }
-
-    fn push(&mut self, op: Op) {
-        op.validate();
-        self.ops.push(op);
-    }
-
-    fn alloc_qubit(&mut self) -> QubitId {
-        let out = QubitId(self.next_qubit);
-        self.next_qubit += 1;
-        out
-    }
-
-    fn alloc_qubits(&mut self, n: usize) -> Vec<QubitId> {
-        (0..n).map(|_| self.alloc_qubit()).collect()
-    }
-
-    fn declare_qubit_register(&mut self, qubits: &[QubitId]) {
-        let register = RegisterId(self.next_register);
-        self.next_register += 1;
-        for &qubit in qubits {
-            let mut op = Op::empty();
-            op.kind = OperationType::AppendToRegister;
-            op.q_target = qubit;
-            op.r_target = register;
-            self.push(op);
-        }
-        let mut op = Op::empty();
-        op.kind = OperationType::Register;
-        op.r_target = register;
-        self.push(op);
-    }
-
-    fn x(&mut self, target: QubitId) {
-        let mut op = Op::empty();
-        op.kind = OperationType::X;
-        op.q_target = target;
-        self.push(op);
-    }
-
-    fn cx(&mut self, control: QubitId, target: QubitId) {
-        let mut op = Op::empty();
-        op.kind = OperationType::CX;
-        op.q_control1 = control;
-        op.q_target = target;
-        self.push(op);
-    }
-
-    fn ccx(&mut self, control1: QubitId, control2: QubitId, target: QubitId) {
-        let mut op = Op::empty();
-        op.kind = OperationType::CCX;
-        op.q_control1 = control1;
-        op.q_control2 = control2;
-        op.q_target = target;
-        self.push(op);
-    }
-}
-
-fn mod_i(value: i32) -> u16 {
-    value.rem_euclid(FIELD_MODULUS as i32) as u16
-}
-
-fn inv_mod(value: u16) -> Option<u16> {
-    if value == 0 {
-        return None;
-    }
-    let mut t = 0i32;
-    let mut new_t = 1i32;
-    let mut r = FIELD_MODULUS as i32;
-    let mut new_r = value as i32;
-    while new_r != 0 {
-        let quotient = r / new_r;
-        (t, new_t) = (new_t, t - quotient * new_t);
-        (r, new_r) = (new_r, r - quotient * new_r);
-    }
-    if r > 1 {
-        None
-    } else {
-        Some(mod_i(t))
-    }
-}
-
-fn point_add(left: Point, right: Point) -> Point {
-    if left.infinity {
-        return right;
-    }
-    if right.infinity {
-        return left;
-    }
-    if left.x == right.x && (left.y + right.y) % FIELD_MODULUS == 0 {
-        return Point {
-            x: 0,
-            y: 0,
-            infinity: true,
-        };
-    }
-
-    let lambda = if left == right {
-        if left.y == 0 {
-            return Point {
-                x: 0,
-                y: 0,
-                infinity: true,
-            };
-        }
-        let numerator = (3 * left.x as i32 * left.x as i32 + CURVE_A as i32) % FIELD_MODULUS as i32;
-        let denominator = inv_mod((2 * left.y) % FIELD_MODULUS).expect("nonzero tangent");
-        mod_i(numerator * denominator as i32)
-    } else {
-        let numerator = mod_i(right.y as i32 - left.y as i32);
-        let denominator =
-            inv_mod(mod_i(right.x as i32 - left.x as i32)).expect("nonzero addition denominator");
-        mod_i(numerator as i32 * denominator as i32)
-    };
-    let x3 = mod_i(lambda as i32 * lambda as i32 - left.x as i32 - right.x as i32);
-    let y3 = mod_i(lambda as i32 * (left.x as i32 - x3 as i32) - left.y as i32);
-    Point {
-        x: x3,
-        y: y3,
-        infinity: false,
-    }
-}
-
-fn scalar_mul(mut scalar: u16, point: Point) -> Point {
-    scalar %= GROUP_ORDER;
-    let mut acc = Point {
-        x: 0,
-        y: 0,
-        infinity: true,
-    };
-    let mut cur = point;
-    while scalar != 0 {
-        if scalar & 1 != 0 {
-            acc = point_add(acc, cur);
-        }
-        cur = point_add(cur, cur);
-        scalar >>= 1;
-    }
-    acc
-}
-
-fn group_points() -> [Point; GROUP_ORDER as usize] {
-    let mut points = [Point {
-        x: 0,
-        y: 0,
-        infinity: true,
-    }; GROUP_ORDER as usize];
-    let mut scalar = 1u16;
-    while scalar < GROUP_ORDER {
-        points[scalar as usize] = scalar_mul(scalar, BASE_POINT);
-        scalar += 1;
-    }
-    points
-}
-
-fn point_bits(point: Point) -> u32 {
-    let mut out = u32::from(point.x);
-    out |= u32::from(point.y) << WIDTH;
-    if point.infinity {
-        out |= 1 << (2 * WIDTH);
-    }
-    out
-}
-
-fn emit_exact_match_flag(builder: &mut Builder, input: &[QubitId], value: u32, temps: &[QubitId]) {
-    debug_assert!(temps.len() + 1 >= input.len());
-    for (bit, &qubit) in input.iter().enumerate() {
-        if ((value >> bit) & 1) == 0 {
-            builder.x(qubit);
-        }
-    }
-
-    builder.ccx(input[0], input[1], temps[0]);
-    for bit in 2..input.len() {
-        builder.ccx(temps[bit - 2], input[bit], temps[bit - 1]);
-    }
-}
-
-fn unemit_exact_match_flag(
-    builder: &mut Builder,
-    input: &[QubitId],
-    value: u32,
-    temps: &[QubitId],
-) {
-    for bit in (2..input.len()).rev() {
-        builder.ccx(temps[bit - 2], input[bit], temps[bit - 1]);
-    }
-    builder.ccx(input[0], input[1], temps[0]);
-
-    for (bit, &qubit) in input.iter().enumerate() {
-        if ((value >> bit) & 1) == 0 {
-            builder.x(qubit);
-        }
-    }
-}
-
-fn emit_point_xor(
-    builder: &mut Builder,
-    flag: QubitId,
-    point: Point,
-    x: &[QubitId],
-    y: &[QubitId],
+#[derive(Clone)]
+struct PointRegister {
+    x: Vec<QubitId>,
+    y: Vec<QubitId>,
     inf: QubitId,
-) {
-    if point.infinity {
-        builder.cx(flag, inf);
-        return;
-    }
-    for (bit, &target) in x.iter().enumerate() {
-        if ((point.x >> bit) & 1) != 0 {
-            builder.cx(flag, target);
-        }
-    }
-    for (bit, &target) in y.iter().enumerate() {
-        if ((point.y >> bit) & 1) != 0 {
-            builder.cx(flag, target);
-        }
+}
+
+fn qubit_signals(qubits: &[QubitId]) -> Vec<Signal> {
+    qubits.iter().copied().map(Signal::qubit).collect()
+}
+
+fn point_signals(point: &PointRegister) -> PointValue {
+    PointValue {
+        x: qubit_signals(&point.x),
+        y: qubit_signals(&point.y),
+        inf: Signal::qubit(point.inf),
     }
 }
 
-fn emit_scalar_xor(builder: &mut Builder, flag: QubitId, value: u16, target: &[QubitId]) {
-    for (bit, &qubit) in target.iter().enumerate() {
-        if ((value >> bit) & 1) != 0 {
-            builder.cx(flag, qubit);
-        }
+fn point_const(x: u16, y: u16, inf: bool) -> PointValue {
+    PointValue {
+        x: const_bits(x, WIDTH),
+        y: const_bits(y, WIDTH),
+        inf: Signal::constant(inf),
     }
 }
 
-fn emit_scalar_point_table(
-    builder: &mut Builder,
-    scalar: &[QubitId],
-    point_x: &[QubitId],
-    point_y: &[QubitId],
-    point_inf: QubitId,
-    out_x: &[QubitId],
-    out_y: &[QubitId],
-    out_inf: QubitId,
-    temps: &[QubitId],
-) {
-    let points = group_points();
-    let mut input = Vec::with_capacity(WIDTH + 2 * WIDTH + 1);
-    input.extend_from_slice(scalar);
-    input.extend_from_slice(point_x);
-    input.extend_from_slice(point_y);
-    input.push(point_inf);
-
-    for raw_scalar in 0..(1u16 << WIDTH) {
-        for &input_point in &points {
-            let value = u32::from(raw_scalar) | (point_bits(input_point) << WIDTH);
-            let point = scalar_mul(raw_scalar % GROUP_ORDER, input_point);
-            emit_exact_match_flag(builder, &input, value, temps);
-            emit_point_xor(
-                builder,
-                temps[input.len() - 2],
-                point,
-                out_x,
-                out_y,
-                out_inf,
-            );
-            unemit_exact_match_flag(builder, &input, value, temps);
-        }
+fn hold_point(builder: &mut Builder<impl OpSink>) -> PointRegister {
+    PointRegister {
+        x: builder.hold_qubits(WIDTH),
+        y: builder.hold_qubits(WIDTH),
+        inf: builder.hold_qubits(1)[0],
     }
 }
 
-fn emit_point_add_table(
-    builder: &mut Builder,
-    ax: &[QubitId],
-    ay: &[QubitId],
-    ainf: QubitId,
-    bx: &[QubitId],
-    by: &[QubitId],
-    binf: QubitId,
-    rx: &[QubitId],
-    ry: &[QubitId],
-    rinf: QubitId,
-    temps: &[QubitId],
-) {
-    let points = group_points();
-    let mut input = Vec::with_capacity(2 * (2 * WIDTH + 1));
-    input.extend_from_slice(ax);
-    input.extend_from_slice(ay);
-    input.push(ainf);
-    input.extend_from_slice(bx);
-    input.extend_from_slice(by);
-    input.push(binf);
+fn release_point(builder: &mut Builder<impl OpSink>, point: PointRegister) {
+    builder.release_hold_qubits(point.x);
+    builder.release_hold_qubits(point.y);
+    builder.release_hold_qubits(vec![point.inf]);
+}
 
-    for &left in &points {
-        for &right in &points {
-            let value = point_bits(left) | (point_bits(right) << (2 * WIDTH + 1));
-            let point = point_add(left, right);
-            emit_exact_match_flag(builder, &input, value, temps);
-            emit_point_xor(builder, temps[input.len() - 2], point, rx, ry, rinf);
-            unemit_exact_match_flag(builder, &input, value, temps);
-        }
+fn mux_point(
+    builder: &mut Builder<impl OpSink>,
+    selector: Signal,
+    when_true: &PointValue,
+    when_false: &PointValue,
+) -> PointValue {
+    PointValue {
+        x: builder.mux_bits(selector.clone(), &when_true.x, &when_false.x),
+        y: builder.mux_bits(selector.clone(), &when_true.y, &when_false.y),
+        inf: builder.mux(selector, when_true.inf.clone(), when_false.inf.clone()),
     }
 }
 
-fn emit_point_double_table(
-    builder: &mut Builder,
-    point_x: &[QubitId],
-    point_y: &[QubitId],
-    point_inf: QubitId,
-    out_x: &[QubitId],
-    out_y: &[QubitId],
-    out_inf: QubitId,
-    temps: &[QubitId],
-) {
-    let points = group_points();
-    let mut input = Vec::with_capacity(2 * WIDTH + 1);
-    input.extend_from_slice(point_x);
-    input.extend_from_slice(point_y);
-    input.push(point_inf);
+fn copy_point(builder: &mut Builder<impl OpSink>, point: PointValue, target: &PointRegister) {
+    builder.finish_segment(
+        vec![(point.x, target.x.clone()), (point.y, target.y.clone())],
+        vec![(point.inf, target.inf)],
+    );
+}
 
-    for &point in &points {
-        let value = point_bits(point);
-        let doubled = point_add(point, point);
-        emit_exact_match_flag(builder, &input, value, temps);
-        emit_point_xor(
-            builder,
-            temps[input.len() - 2],
-            doubled,
-            out_x,
-            out_y,
-            out_inf,
+fn swap_points(builder: &mut Builder<impl OpSink>, left: &PointRegister, right: &PointRegister) {
+    for (&a, &b) in left.x.iter().zip(&right.x) {
+        builder.swap(a, b);
+    }
+    for (&a, &b) in left.y.iter().zip(&right.y) {
+        builder.swap(a, b);
+    }
+    builder.swap(left.inf, right.inf);
+}
+
+fn same_point_signal(builder: &mut Builder<impl OpSink>, point: &PointRegister) -> Signal {
+    let y_zero = builder.is_zero(&qubit_signals(&point.y));
+    builder.or(Signal::qubit(point.inf), y_zero)
+}
+
+fn add_same_point_signal(
+    builder: &mut Builder<impl OpSink>,
+    left: &PointRegister,
+    right: &PointRegister,
+) -> Signal {
+    let same_x = builder.eq_bits(&qubit_signals(&left.x), &qubit_signals(&right.x));
+    let same_y = builder.eq_bits(&qubit_signals(&left.y), &qubit_signals(&right.y));
+    let same_xy = builder.and(same_x, same_y);
+    let not_left_inf = builder.not(Signal::qubit(left.inf));
+    let not_right_inf = builder.not(Signal::qubit(right.inf));
+    let neither_inf = builder.and(not_left_inf, not_right_inf);
+    builder.and(same_xy, neither_inf)
+}
+
+fn inverse_case_signal(
+    builder: &mut Builder<impl OpSink>,
+    left: &PointRegister,
+    right: &PointRegister,
+    y_sum: &[QubitId],
+) -> Signal {
+    let same_x = builder.eq_bits(&qubit_signals(&left.x), &qubit_signals(&right.x));
+    let y_sum_zero = builder.is_zero(&qubit_signals(y_sum));
+    let same_x_and_neg_y = builder.and(same_x, y_sum_zero);
+    let not_left_inf = builder.not(Signal::qubit(left.inf));
+    let not_right_inf = builder.not(Signal::qubit(right.inf));
+    let neither_inf = builder.and(not_left_inf, not_right_inf);
+    builder.and(same_x_and_neg_y, neither_inf)
+}
+
+fn point_double_xor(
+    builder: &mut Builder<impl OpSink>,
+    point: &PointRegister,
+    out: &PointRegister,
+) {
+    let x_squared = builder.hold_qubits(WIDTH);
+    let numerator = builder.hold_qubits(WIDTH);
+    let denominator = builder.hold_qubits(WIDTH);
+    let denominator_inv = builder.hold_qubits(WIDTH);
+    let lambda = builder.hold_qubits(WIDTH);
+    let lambda_squared = builder.hold_qubits(WIDTH);
+    let double_x = builder.hold_qubits(WIDTH);
+    let x3 = builder.hold_qubits(WIDTH);
+    let x_minus_x3 = builder.hold_qubits(WIDTH);
+    let lambda_times_delta = builder.hold_qubits(WIDTH);
+    let y3 = builder.hold_qubits(WIDTH);
+
+    let compute_tape = builder.record(|builder| {
+        builder.xor_mul_mod_into(&point.x, &point.x, &x_squared);
+        builder.xor_mul_const_mod_into(&x_squared, 3, &numerator);
+        builder.xor_mul_const_mod_into(&point.y, 2, &denominator);
+        builder.xor_inv_mod_into(&denominator, &denominator_inv);
+        builder.xor_mul_mod_into(&numerator, &denominator_inv, &lambda);
+        builder.xor_mul_mod_into(&lambda, &lambda, &lambda_squared);
+        builder.xor_mul_const_mod_into(&point.x, 2, &double_x);
+        builder.xor_sub_mod_into(&lambda_squared, &double_x, &x3);
+        builder.xor_sub_mod_into(&point.x, &x3, &x_minus_x3);
+        builder.xor_mul_mod_into(&lambda, &x_minus_x3, &lambda_times_delta);
+        builder.xor_sub_mod_into(&lambda_times_delta, &point.y, &y3);
+    });
+
+    let formula = PointValue {
+        x: qubit_signals(&x3),
+        y: qubit_signals(&y3),
+        inf: Signal::constant(false),
+    };
+    let invalid_double = same_point_signal(builder, point);
+    let selected = mux_point(builder, invalid_double, &point_const(0, 0, true), &formula);
+    copy_point(builder, selected, out);
+
+    builder.append_reverse_tape(&compute_tape);
+    for field in [
+        x_squared,
+        numerator,
+        denominator,
+        denominator_inv,
+        lambda,
+        lambda_squared,
+        double_x,
+        x3,
+        x_minus_x3,
+        lambda_times_delta,
+        y3,
+    ] {
+        builder.release_hold_qubits(field);
+    }
+}
+
+fn point_add_xor(
+    builder: &mut Builder<impl OpSink>,
+    left: &PointRegister,
+    right: &PointRegister,
+    out: &PointRegister,
+) {
+    let y_sum = builder.hold_qubits(WIDTH);
+    let add_num = builder.hold_qubits(WIDTH);
+    let add_den = builder.hold_qubits(WIDTH);
+    let x_squared = builder.hold_qubits(WIDTH);
+    let double_num = builder.hold_qubits(WIDTH);
+    let double_den = builder.hold_qubits(WIDTH);
+    let selected_num = builder.hold_qubits(WIDTH);
+    let selected_den = builder.hold_qubits(WIDTH);
+    let selected_den_inv = builder.hold_qubits(WIDTH);
+    let lambda = builder.hold_qubits(WIDTH);
+    let lambda_squared = builder.hold_qubits(WIDTH);
+    let x_minus_left = builder.hold_qubits(WIDTH);
+    let x3 = builder.hold_qubits(WIDTH);
+    let left_x_minus_x3 = builder.hold_qubits(WIDTH);
+    let lambda_times_delta = builder.hold_qubits(WIDTH);
+    let y3 = builder.hold_qubits(WIDTH);
+
+    let compute_tape = builder.record(|builder| {
+        builder.xor_add_mod_into(&left.y, &right.y, &y_sum);
+        builder.xor_sub_mod_into(&right.y, &left.y, &add_num);
+        builder.xor_sub_mod_into(&right.x, &left.x, &add_den);
+
+        builder.xor_mul_mod_into(&left.x, &left.x, &x_squared);
+        builder.xor_mul_const_mod_into(&x_squared, 3, &double_num);
+        builder.xor_mul_const_mod_into(&left.y, 2, &double_den);
+
+        let same_point = add_same_point_signal(builder, left, right);
+        let selected_num_bits = builder.mux_bits(
+            same_point.clone(),
+            &qubit_signals(&double_num),
+            &qubit_signals(&add_num),
         );
-        unemit_exact_match_flag(builder, &input, value, temps);
+        let selected_den_bits = builder.mux_bits(
+            same_point,
+            &qubit_signals(&double_den),
+            &qubit_signals(&add_den),
+        );
+        builder.finish_segment(
+            vec![
+                (selected_num_bits, selected_num.clone()),
+                (selected_den_bits, selected_den.clone()),
+            ],
+            Vec::new(),
+        );
+        builder.xor_inv_mod_into(&selected_den, &selected_den_inv);
+        builder.xor_mul_mod_into(&selected_num, &selected_den_inv, &lambda);
+
+        builder.xor_mul_mod_into(&lambda, &lambda, &lambda_squared);
+        builder.xor_sub_mod_into(&lambda_squared, &left.x, &x_minus_left);
+        builder.xor_sub_mod_into(&x_minus_left, &right.x, &x3);
+        builder.xor_sub_mod_into(&left.x, &x3, &left_x_minus_x3);
+        builder.xor_mul_mod_into(&lambda, &left_x_minus_x3, &lambda_times_delta);
+        builder.xor_sub_mod_into(&lambda_times_delta, &left.y, &y3);
+    });
+
+    let formula = PointValue {
+        x: qubit_signals(&x3),
+        y: qubit_signals(&y3),
+        inf: Signal::constant(false),
+    };
+    let inverse_case = inverse_case_signal(builder, left, right, &y_sum);
+    let after_inverse = mux_point(builder, inverse_case, &point_const(0, 0, true), &formula);
+    let after_right_inf = mux_point(
+        builder,
+        Signal::qubit(right.inf),
+        &point_signals(left),
+        &after_inverse,
+    );
+    let selected = mux_point(
+        builder,
+        Signal::qubit(left.inf),
+        &point_signals(right),
+        &after_right_inf,
+    );
+    copy_point(builder, selected, out);
+
+    builder.append_reverse_tape(&compute_tape);
+    for field in [
+        y_sum,
+        add_num,
+        add_den,
+        x_squared,
+        double_num,
+        double_den,
+        selected_num,
+        selected_den,
+        selected_den_inv,
+        lambda,
+        lambda_squared,
+        x_minus_left,
+        x3,
+        left_x_minus_x3,
+        lambda_times_delta,
+        y3,
+    ] {
+        builder.release_hold_qubits(field);
     }
 }
 
-fn test_add(left: u16, right: u16, modulus: u16) -> u16 {
-    (left + right) % modulus
+fn point_neg_xor(builder: &mut Builder<impl OpSink>, point: &PointRegister, out: &PointRegister) {
+    builder.xor_bits_into(&point.x, &out.x);
+    let neg_y = builder.sub_mod(
+        &const_bits(0, WIDTH),
+        &qubit_signals(&point.y),
+        FIELD_MODULUS,
+    );
+    builder.finish_segment(
+        vec![(neg_y, out.y.clone())],
+        vec![(Signal::qubit(point.inf), out.inf)],
+    );
 }
 
-fn test_sub(left: u16, right: u16, modulus: u16) -> u16 {
-    (left as i32 - right as i32).rem_euclid(modulus as i32) as u16
-}
-
-fn test_mul(left: u16, right: u16, modulus: u16) -> u16 {
-    ((left as u32 * right as u32) % modulus as u32) as u16
-}
-
-fn test_inv(value: u16, modulus: u16) -> u16 {
-    if value == 0 {
-        return 0;
-    }
-    let mut t = 0i32;
-    let mut new_t = 1i32;
-    let mut r = modulus as i32;
-    let mut new_r = value as i32;
-    while new_r != 0 {
-        let quotient = r / new_r;
-        (t, new_t) = (new_t, t - quotient * new_t);
-        (r, new_r) = (new_r, r - quotient * new_r);
-    }
-    t.rem_euclid(modulus as i32) as u16
-}
-
-fn emit_binary_field_table(
-    builder: &mut Builder,
-    selector: &[QubitId],
-    left: &[QubitId],
-    right: &[QubitId],
-    out: &[QubitId],
-    temps: &[QubitId],
-    op: fn(u16, u16, u16) -> u16,
+fn xor_selected_point(
+    builder: &mut Builder<impl OpSink>,
+    selector: QubitId,
+    when_true: &PointRegister,
+    when_false: &PointRegister,
+    target: &PointRegister,
 ) {
-    let mut input = Vec::with_capacity(FIELD_SELECTOR_WIDTH + 2 * FIELD_TEST_WIDTH);
-    input.extend_from_slice(selector);
-    input.extend_from_slice(left);
-    input.extend_from_slice(right);
-
-    for &(selector_value, modulus) in &FIELD_SPECS {
-        for left_value in 0..modulus {
-            for right_value in 0..modulus {
-                let value = op(left_value, right_value, modulus);
-                if value == 0 {
-                    continue;
-                }
-                let input_value = u32::from(selector_value)
-                    | (u32::from(left_value) << FIELD_SELECTOR_WIDTH)
-                    | (u32::from(right_value) << (FIELD_SELECTOR_WIDTH + FIELD_TEST_WIDTH));
-                emit_exact_match_flag(builder, &input, input_value, temps);
-                emit_scalar_xor(builder, temps[input.len() - 2], value, out);
-                unemit_exact_match_flag(builder, &input, input_value, temps);
-            }
-        }
-    }
+    let selected = mux_point(
+        builder,
+        Signal::qubit(selector),
+        &point_signals(when_true),
+        &point_signals(when_false),
+    );
+    copy_point(builder, selected, target);
 }
 
-fn emit_unary_field_table(
-    builder: &mut Builder,
-    selector: &[QubitId],
-    input: &[QubitId],
-    out: &[QubitId],
-    temps: &[QubitId],
-    op: fn(u16, u16) -> u16,
+fn controlled_add_assign(
+    builder: &mut Builder<impl OpSink>,
+    acc: &PointRegister,
+    addend: &PointRegister,
+    selector: QubitId,
 ) {
-    let mut selector_and_input = Vec::with_capacity(FIELD_SELECTOR_WIDTH + FIELD_TEST_WIDTH);
-    selector_and_input.extend_from_slice(selector);
-    selector_and_input.extend_from_slice(input);
+    let sum = hold_point(builder);
+    let tmp = hold_point(builder);
+    let neg_addend = hold_point(builder);
 
-    for &(selector_value, modulus) in &FIELD_SPECS {
-        for input_value in 0..modulus {
-            let value = op(input_value, modulus);
-            if value == 0 {
-                continue;
-            }
-            let match_value =
-                u32::from(selector_value) | (u32::from(input_value) << FIELD_SELECTOR_WIDTH);
-            emit_exact_match_flag(builder, &selector_and_input, match_value, temps);
-            emit_scalar_xor(builder, temps[selector_and_input.len() - 2], value, out);
-            unemit_exact_match_flag(builder, &selector_and_input, match_value, temps);
-        }
-    }
+    point_add_xor(builder, acc, addend, &sum);
+    xor_selected_point(builder, selector, &sum, acc, &tmp);
+    point_add_xor(builder, acc, addend, &sum);
+
+    swap_points(builder, acc, &tmp);
+
+    point_neg_xor(builder, addend, &neg_addend);
+    point_add_xor(builder, acc, &neg_addend, &sum);
+    xor_selected_point(builder, selector, &sum, acc, &tmp);
+    point_add_xor(builder, acc, &neg_addend, &sum);
+    point_neg_xor(builder, addend, &neg_addend);
+
+    release_point(builder, neg_addend);
+    release_point(builder, tmp);
+    release_point(builder, sum);
 }
 
-fn emit_register_copy(builder: &mut Builder, input: &[QubitId], out: &[QubitId]) {
-    for (&control, &target) in input.iter().zip(out) {
-        builder.cx(control, target);
-    }
-}
-
-fn emit_zero_when_denominator_is_zero(
-    builder: &mut Builder,
-    denominator: &[QubitId],
-    numerator: &[QubitId],
-    target: &[QubitId],
-    temps: &[QubitId],
+fn scalar_mul_into(
+    builder: &mut Builder<impl OpSink>,
+    scalar: &[QubitId],
+    point: &PointRegister,
+    out: &PointRegister,
 ) {
-    emit_exact_match_flag(builder, denominator, 0, temps);
-    let zero_flag = temps[denominator.len() - 2];
-    for (&control, &target) in numerator.iter().zip(target) {
-        builder.ccx(zero_flag, control, target);
-    }
-    unemit_exact_match_flag(builder, denominator, 0, temps);
+    builder.toggle(out.inf);
+    let mut context = scalar_api::ScalarMulContext::new(builder, scalar, point, out);
+    scalar_strategy::scalar_mul_into(&mut context);
+    context.release_points();
 }
 
 pub fn build() -> Vec<Op> {
-    let mut builder = Builder::new();
+    build_into(VecOpSink::default()).into_ops()
+}
+
+pub fn build_into<S: OpSink>(sink: S) -> S {
+    let mut builder = Builder::with_sink(sink);
     let a = builder.alloc_qubits(WIDTH);
     let b = builder.alloc_qubits(WIDTH);
     let px = builder.alloc_qubits(WIDTH);
@@ -538,33 +374,6 @@ pub fn build() -> Vec<Op> {
     let rx = builder.alloc_qubits(WIDTH);
     let ry = builder.alloc_qubits(WIDTH);
     let rinf = builder.alloc_qubit();
-    let sum_x = builder.alloc_qubits(WIDTH);
-    let sum_y = builder.alloc_qubits(WIDTH);
-    let sum_inf = builder.alloc_qubit();
-    let double_x = builder.alloc_qubits(WIDTH);
-    let double_y = builder.alloc_qubits(WIDTH);
-    let double_inf = builder.alloc_qubit();
-    let field_selector = builder.alloc_qubits(FIELD_SELECTOR_WIDTH);
-    let field_x1 = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_y1 = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_x2 = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_y2 = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_sum = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_den = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_num = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_product = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_den_inv = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_lambda = builder.alloc_qubits(FIELD_TEST_WIDTH);
-    let field_lambda_den = builder.alloc_qubits(FIELD_TEST_WIDTH);
-
-    let ax = builder.alloc_qubits(WIDTH);
-    let ay = builder.alloc_qubits(WIDTH);
-    let ainf = builder.alloc_qubit();
-    let bx = builder.alloc_qubits(WIDTH);
-    let by = builder.alloc_qubits(WIDTH);
-    let binf = builder.alloc_qubit();
-    let temps = builder.alloc_qubits(2 * (2 * WIDTH + 1) - 1);
-    let field_temps = builder.alloc_qubits(FIELD_SELECTOR_WIDTH + 2 * FIELD_TEST_WIDTH - 1);
 
     builder.declare_qubit_register(&a);
     builder.declare_qubit_register(&b);
@@ -577,126 +386,39 @@ pub fn build() -> Vec<Op> {
     builder.declare_qubit_register(&rx);
     builder.declare_qubit_register(&ry);
     builder.declare_qubit_register(&[rinf]);
-    builder.declare_qubit_register(&sum_x);
-    builder.declare_qubit_register(&sum_y);
-    builder.declare_qubit_register(&[sum_inf]);
-    builder.declare_qubit_register(&double_x);
-    builder.declare_qubit_register(&double_y);
-    builder.declare_qubit_register(&[double_inf]);
-    builder.declare_qubit_register(&field_selector);
-    builder.declare_qubit_register(&field_x1);
-    builder.declare_qubit_register(&field_y1);
-    builder.declare_qubit_register(&field_x2);
-    builder.declare_qubit_register(&field_y2);
-    builder.declare_qubit_register(&field_sum);
-    builder.declare_qubit_register(&field_den);
-    builder.declare_qubit_register(&field_num);
-    builder.declare_qubit_register(&field_product);
-    builder.declare_qubit_register(&field_den_inv);
-    builder.declare_qubit_register(&field_lambda);
-    builder.declare_qubit_register(&field_lambda_den);
 
-    emit_scalar_point_table(&mut builder, &a, &px, &py, pinf, &ax, &ay, ainf, &temps);
-    emit_scalar_point_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
-    emit_point_add_table(
-        &mut builder,
-        &ax,
-        &ay,
-        ainf,
-        &bx,
-        &by,
-        binf,
-        &rx,
-        &ry,
-        rinf,
-        &temps,
-    );
-    emit_point_add_table(
-        &mut builder,
-        &px,
-        &py,
-        pinf,
-        &qx,
-        &qy,
-        qinf,
-        &sum_x,
-        &sum_y,
-        sum_inf,
-        &temps,
-    );
-    emit_point_double_table(
-        &mut builder,
-        &px,
-        &py,
-        pinf,
-        &double_x,
-        &double_y,
-        double_inf,
-        &temps,
-    );
-    emit_scalar_point_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
-    emit_scalar_point_table(&mut builder, &a, &px, &py, pinf, &ax, &ay, ainf, &temps);
-    emit_binary_field_table(
-        &mut builder,
-        &field_selector,
-        &field_x1,
-        &field_x2,
-        &field_sum,
-        &field_temps,
-        test_add,
-    );
-    emit_binary_field_table(
-        &mut builder,
-        &field_selector,
-        &field_x2,
-        &field_x1,
-        &field_den,
-        &field_temps,
-        test_sub,
-    );
-    emit_binary_field_table(
-        &mut builder,
-        &field_selector,
-        &field_y2,
-        &field_y1,
-        &field_num,
-        &field_temps,
-        test_sub,
-    );
-    emit_binary_field_table(
-        &mut builder,
-        &field_selector,
-        &field_x1,
-        &field_y2,
-        &field_product,
-        &field_temps,
-        test_mul,
-    );
-    emit_unary_field_table(
-        &mut builder,
-        &field_selector,
-        &field_den,
-        &field_den_inv,
-        &field_temps,
-        test_inv,
-    );
-    emit_binary_field_table(
-        &mut builder,
-        &field_selector,
-        &field_num,
-        &field_den_inv,
-        &field_lambda,
-        &field_temps,
-        test_mul,
-    );
-    emit_register_copy(&mut builder, &field_num, &field_lambda_den);
-    emit_zero_when_denominator_is_zero(
-        &mut builder,
-        &field_den,
-        &field_num,
-        &field_lambda_den,
-        &field_temps,
-    );
+    let p = PointRegister {
+        x: px,
+        y: py,
+        inf: pinf,
+    };
+    let q = PointRegister {
+        x: qx,
+        y: qy,
+        inf: qinf,
+    };
+    let r = PointRegister {
+        x: rx,
+        y: ry,
+        inf: rinf,
+    };
 
-    builder.ops
+    let a_hold = hold_point(&mut builder);
+    let b_hold = hold_point(&mut builder);
+    let a_tape = builder.record(|builder| {
+        scalar_mul_into(builder, &a, &p, &a_hold);
+    });
+    let b_tape = builder.record(|builder| {
+        scalar_mul_into(builder, &b, &q, &b_hold);
+    });
+
+    point_add_xor(&mut builder, &a_hold, &b_hold, &r);
+
+    builder.append_reverse_tape(&b_tape);
+    builder.append_reverse_tape(&a_tape);
+
+    release_point(&mut builder, b_hold);
+    release_point(&mut builder, a_hold);
+
+    builder.finish_sink()
 }

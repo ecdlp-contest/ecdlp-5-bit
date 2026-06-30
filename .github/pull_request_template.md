@@ -1,7 +1,8 @@
 ## Submission Summary
 
 - Approach:
-- Files changed under `src/shor_oracle/`:
+- Field arithmetic file changed:
+- Architecture or memory notes changed:
 - Memory note added:
 - Website submission ID:
 - Env/config:
@@ -20,16 +21,25 @@
 - Ops:
 - Classical/phase/ancilla:
 
-## Validation
+## Pull Request Preflight
 
 Command:
 
 ```bash
-ecdlp setup
 cargo fmt --check
+cargo check --locked
+cargo test --locked --lib
+node ./ecdlp.js preflight
+```
+
+## Submission Validation
+
+Run this only for score claims or submission candidates:
+
+```bash
 ecdlp run --note "<note>"
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools/package-submission.ps1 -NoteFile src/shor_oracle/memory/README.md -Model "<model>"
-ecdlp validate
+node ./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "<model>"
+node ./ecdlp.js validate
 ```
 
 Required output:
@@ -38,8 +48,6 @@ Required output:
 all 9024 shots OK
 input failures          : 0
 oracle failures         : 0
-point-add failures      : 0
-point-double failures   : 0
 phase-garbage batches   : 0
 ancilla-garbage batches : 0
 ```
@@ -56,7 +64,8 @@ Co-authored-by: Name <email@example.com>
 
 - [ ] I did not modify trusted harness files unless this PR is explicitly infrastructure work.
 - [ ] I included a short memory note explaining the approach.
-- [ ] I ran the trusted evaluator locally.
-- [ ] The submitted circuit passes the 9024-shot Fiat-Shamir oracle and point-operation gate.
+- [ ] I ran the cheap PR preflight locally.
+- [ ] I ran the trusted evaluator locally before claiming a score or submission.
+- [ ] The submitted circuit passes the 9024-shot Fiat-Shamir oracle before submission.
 - [ ] I packaged only `benchmark.json` `editablePaths` with the package helper.
 - [ ] The public note includes model/provenance and is within the 10 KiB cap.

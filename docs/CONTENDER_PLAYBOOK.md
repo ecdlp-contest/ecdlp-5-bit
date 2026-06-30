@@ -1,49 +1,74 @@
 # Contender Playbook
 
-The baseline is a direct reversible lookup for the 5-bit Shor oracle plus a
-separate `F_31`, `F_13`, and `F_11` field-witness ABI:
+The baseline is a reversible arithmetic implementation of the 5-bit Shor oracle:
 
 ```text
-|a>|b>|P>|Q>|field inputs>|0> -> |a>|b>|P>|Q>|field inputs>|aP + bQ>|P+Q>|2P>|field witnesses>
+|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>
 ```
 
-A good optimization keeps the ABI unchanged while reducing CCX count, qubits, or
-both.
+A good optimization keeps the 11-register ABI unchanged while reducing CCX
+count, qubits, or both. The trusted `src/shor_oracle/mod.rs` composer freezes
+the oracle and affine point formulas, trusted `src/shor_oracle/scalar_api.rs`
+exposes opaque scalar-scheduling handles, and trusted
+`src/shor_oracle/builder.rs` owns register allocation, segment boundaries, and
+primitive op emission. Submitted code changes should optimize
+`src/shor_oracle/field_arithmetic.rs` through the opaque field-kernel facade and
+`src/shor_oracle/scalar_strategy.rs` through the opaque scalar API, not by
+building P/Q subgroup-index tables, direct `aP+bQ` tables, or an enumerated
+point oracle.
 
 ## Loop
 
-1. Edit only `src/shor_oracle/`.
+1. Edit `src/shor_oracle/field_arithmetic.rs`, `src/shor_oracle/scalar_strategy.rs`, `src/shor_oracle/architecture.mmd`, and notes under `src/shor_oracle/memory/`.
 2. Run `cargo fmt --check`.
-3. Run `./ecdlp.js run --note "short experiment label"` or `.\benchmark.ps1`.
-4. Record score, Toffoli, qubits, ops, and the idea tested in
+3. Run `./ecdlp.js preflight` for cheap local and pull-request contract checks.
+4. Run `./ecdlp.js run --note "short experiment label"` or `.\benchmark.ps1`
+   only when validating a score or submission candidate.
+5. Record score, Toffoli, qubits, ops, and the idea tested in
    `src/shor_oracle/memory/`.
-5. Update `src/shor_oracle/architecture.mmd` with the submitted algorithm shape
-   and optimization path.
-6. Follow the package, validate, and submit flow in `README.md` only after a
+6. Update `src/shor_oracle/architecture.mmd` with the submitted algorithm
+   shape and optimization path.
+7. Follow the package, validate, and submit flow in `README.md` only after a
    trusted ranked run.
+
+## Repo-Local Builds
+
+Keep build output and temporary files under `.workspace/` to avoid Windows
+permission or application-control issues. This repo already configures Cargo to
+use `.workspace/target`; if you invoke Cargo directly, make the target and temp
+paths explicit:
+
+```powershell
+New-Item -ItemType Directory -Force .workspace\target, .workspace\tmp | Out-Null
+$env:CARGO_TARGET_DIR = (Resolve-Path .workspace\target).Path
+$env:TMP = (Resolve-Path .workspace\tmp).Path
+$env:TEMP = (Resolve-Path .workspace\tmp).Path
+cargo build --locked --release --bin build_circuit --bin eval_circuit
+```
+
+Use the generated binaries from `.workspace\target\release\`.
 
 ## Architecture Diagram
 
-Submissions must include `src/shor_oracle/architecture.mmd`. `README.md` is the
-canonical source for the exact diagram contract; use this playbook only for
-optimization workflow notes.
+Submissions must include `src/shor_oracle/architecture.mmd`. `README.md`
+is the canonical source for the exact diagram contract; use this playbook only
+for optimization workflow notes.
 
 ## Useful Directions
 
-- Replace the table baseline with arithmetic for variable-base scalar
-  multiplication by `P` and `Q`.
-- Share point-addition and point-doubling arithmetic between the oracle output
-  and the explicit `P+Q` / `2P` check outputs.
-- Replace the selector-driven `F_31`, `F_13`, and `F_11` witness tables with
-  reusable field add, subtract, multiply, inverse, and lambda-check circuits.
-- Use the special field modulus `31 = 2^5 - 1` to fold carries cheaply.
+- Use the opaque field emitter to reduce gates in the field kernels called by
+  scalar multiplication and the final `aP + bQ` point addition.
+- Use the opaque scalar API to trade point-power storage, recomputation, and
+  cleanup without accessing raw point registers or raw gates.
+- Specialize the `F_31` field kernels for `31 = 2^5 - 1` while keeping them
+  scoped to their field operands rather than keyed by public point registers.
 - Trade a small amount of scratch for fewer repeated equality checks.
-- Preserve the input registers `b`, `x1`, `y1`, `x2`, and `y2`; the trusted
-  evaluator rejects mutations.
+- Preserve the input registers `a`, `b`, `P`, and `Q`; the trusted evaluator
+  rejects mutations.
 
 ## Validation Boundary
 
-Scanner-clean or shape-only evidence is not enough. A submission is meaningful
-only when the trusted evaluator reports all 9024 Fiat-Shamir oracle and
-point-operation shots OK, all selected `F_31`, `F_13`, and `F_11` field-witness shots OK, zero phase
-garbage, and zero ancilla garbage.
+Scanner-clean, preflight-clean, or shape-only evidence is not enough for a
+submission. A submission is meaningful only when the trusted evaluator reports
+all 9024 Fiat-Shamir oracle shots OK, zero phase garbage, and zero ancilla
+garbage.
