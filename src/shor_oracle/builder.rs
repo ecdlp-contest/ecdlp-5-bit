@@ -597,18 +597,6 @@ impl<S: OpSink> Builder<S> {
             .collect()
     }
 
-    fn increment_by_signal_bits(&mut self, bits: &[Signal], increment: Signal) -> Vec<Signal> {
-        let mut carry = increment;
-        let mut out = Vec::with_capacity(WIDTH);
-        for bit in 0..WIDTH {
-            let input = Self::bit_at(bits, bit);
-            let sum = self.xor(input.clone(), carry.clone());
-            carry = self.and(input, carry);
-            out.push(sum);
-        }
-        out
-    }
-
     fn xor_carry_out_into(
         &mut self,
         left: &Signal,
@@ -654,14 +642,43 @@ impl<S: OpSink> Builder<S> {
             self.xor_sum_bit_into(&left_bit, &right_bit, &carry_in, sums[bit]);
         }
 
-        let reduced_input =
-            self.increment_by_signal_bits(&qubit_signals(&sums), Signal::qubit(carries[WIDTH - 1]));
-        let all_ones = self.and_many(&reduced_input);
-        let not_all_ones = self.not(all_ones);
-        for (bit, &target) in target.iter().take(WIDTH).enumerate() {
-            let reduced_bit = self.and(Self::bit_at(&reduced_input, bit), not_all_ones.clone());
-            self.xor_signal_into(&reduced_bit, target);
+        let reduced = self.hold_qubits(WIDTH);
+        let increment_carries = self.hold_qubits(WIDTH);
+        for bit in 0..WIDTH {
+            let sum_bit = Signal::qubit(sums[bit]);
+            let carry_in = if bit == 0 {
+                Signal::qubit(carries[WIDTH - 1])
+            } else {
+                Signal::qubit(increment_carries[bit - 1])
+            };
+            self.xor_signal_into(&sum_bit, reduced[bit]);
+            self.xor_signal_into(&carry_in, reduced[bit]);
+            self.xor_and_into(&sum_bit, &carry_in, increment_carries[bit]);
         }
+
+        let all_ones = self.hold_qubits(1)[0];
+        let all_ones_signal = self.and_many(&qubit_signals(&reduced));
+        self.xor_signal_into(&all_ones_signal, all_ones);
+        for (bit, &target) in target.iter().take(WIDTH).enumerate() {
+            self.push_cx(reduced[bit], target);
+            self.push_ccx(reduced[bit], all_ones, target);
+        }
+        self.xor_signal_into(&all_ones_signal, all_ones);
+        self.release_hold_qubits(vec![all_ones]);
+
+        for bit in (0..WIDTH).rev() {
+            let sum_bit = Signal::qubit(sums[bit]);
+            let carry_in = if bit == 0 {
+                Signal::qubit(carries[WIDTH - 1])
+            } else {
+                Signal::qubit(increment_carries[bit - 1])
+            };
+            self.xor_and_into(&sum_bit, &carry_in, increment_carries[bit]);
+            self.xor_signal_into(&carry_in, reduced[bit]);
+            self.xor_signal_into(&sum_bit, reduced[bit]);
+        }
+        self.release_hold_qubits(increment_carries);
+        self.release_hold_qubits(reduced);
 
         for bit in (0..WIDTH).rev() {
             let left_bit = Self::bit_at(left, bit);
@@ -722,7 +739,11 @@ impl<S: OpSink> Builder<S> {
             self.xor_controlled_rotated_field_into(left, selector, shift, &term);
 
             let acc = self.hold_qubits(WIDTH);
-            self.xor_add_mod31_signals_into(&previous, &qubit_signals(&term), &acc);
+            if shift == 0 {
+                self.xor_bits_into(&term, &acc);
+            } else {
+                self.xor_add_mod31_signals_into(&previous, &qubit_signals(&term), &acc);
+            }
 
             previous = qubit_signals(&acc);
             terms.push(term);
@@ -739,7 +760,15 @@ impl<S: OpSink> Builder<S> {
             } else {
                 qubit_signals(&accs[index - 1])
             };
-            self.xor_add_mod31_signals_into(&previous, &qubit_signals(&terms[index]), &accs[index]);
+            if index == 0 {
+                self.xor_bits_into(&terms[index], &accs[index]);
+            } else {
+                self.xor_add_mod31_signals_into(
+                    &previous,
+                    &qubit_signals(&terms[index]),
+                    &accs[index],
+                );
+            }
             self.xor_controlled_rotated_field_into(left, right[index], index, &terms[index]);
             self.release_hold_qubits(accs[index].clone());
             self.release_hold_qubits(terms[index].clone());

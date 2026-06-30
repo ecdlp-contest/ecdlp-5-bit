@@ -27,9 +27,9 @@ flowchart TD
   FieldFacade --> BuilderCircuits["Trusted builder expands field calls into reversible arithmetic circuits"]
   BuilderCircuits --> FieldArithmetic["Editable in-place F_31 arithmetic calls"]
   ScalarPoint --> FieldFacade
-  FieldArithmetic --> FieldAdd["add mod 31"]
+  FieldArithmetic --> FieldAdd["add mod 31 with materialized reduced bits and all-ones flag"]
   FieldArithmetic --> FieldSub["subtract mod 31"]
-  FieldArithmetic --> FieldMul["multiply mod 31 by controlled cyclic shifts; const 3 uses x plus rot1(x)"]
+  FieldArithmetic --> FieldMul["multiply mod 31 by controlled cyclic shifts; first term copies directly; const 3 uses x plus rot1(x)"]
   FieldArithmetic --> FieldInv["inverse mod 31 by Fermat exponentiation, with inverse(0)=0 for invalid branches"]
   FieldArithmetic --> FieldMux["compare, zero-test, and mux"]
 
