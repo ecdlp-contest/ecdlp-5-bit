@@ -339,9 +339,15 @@ impl<S: OpSink> Builder<S> {
     ) {
         match operation {
             UnaryFieldOperation::MulConst(factor) => {
+                let factor = factor % FIELD_MODULUS;
                 let input = qubit_signals(input);
-                let result = self.mul_const_mod31_bits(&input, factor);
-                self.copy_bits_ops(&result, target);
+                if factor == 3 {
+                    let doubled = Self::rotate_mod31_bits(&input, 1);
+                    self.xor_add_mod31_signals_into(&input, &doubled, target);
+                } else {
+                    let result = self.mul_const_mod31_bits(&input, factor);
+                    self.copy_bits_ops(&result, target);
+                }
             }
             UnaryFieldOperation::Inv => self.xor_inv_mod31_into(input, target),
         }

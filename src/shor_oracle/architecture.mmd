@@ -29,7 +29,7 @@ flowchart TD
   ScalarPoint --> FieldFacade
   FieldArithmetic --> FieldAdd["add mod 31"]
   FieldArithmetic --> FieldSub["subtract mod 31"]
-  FieldArithmetic --> FieldMul["multiply mod 31 by controlled cyclic shifts and modular accumulators"]
+  FieldArithmetic --> FieldMul["multiply mod 31 by controlled cyclic shifts; const 3 uses x plus rot1(x)"]
   FieldArithmetic --> FieldInv["inverse mod 31 by Fermat exponentiation, with inverse(0)=0 for invalid branches"]
   FieldArithmetic --> FieldMux["compare, zero-test, and mux"]
 
