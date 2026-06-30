@@ -8,15 +8,18 @@ The baseline is a reversible arithmetic implementation of the 5-bit Shor oracle:
 
 A good optimization keeps the 11-register ABI unchanged while reducing CCX
 count, qubits, or both. The trusted `src/shor_oracle/mod.rs` composer freezes
-the point and scalar-multiplication shape, and trusted `src/shor_oracle/builder.rs`
-owns register allocation, segment boundaries, and primitive op emission.
-Submitted code changes should optimize `src/shor_oracle/field_arithmetic.rs`
-through the opaque field-kernel facade, not by building P/Q subgroup-index
-tables, direct `aP+bQ` tables, or an enumerated point oracle.
+the oracle and affine point formulas, trusted `src/shor_oracle/scalar_api.rs`
+exposes opaque scalar-scheduling handles, and trusted
+`src/shor_oracle/builder.rs` owns register allocation, segment boundaries, and
+primitive op emission. Submitted code changes should optimize
+`src/shor_oracle/field_arithmetic.rs` through the opaque field-kernel facade and
+`src/shor_oracle/scalar_strategy.rs` through the opaque scalar API, not by
+building P/Q subgroup-index tables, direct `aP+bQ` tables, or an enumerated
+point oracle.
 
 ## Loop
 
-1. Edit `src/shor_oracle/field_arithmetic.rs`, `src/shor_oracle/architecture.mmd`, and notes under `src/shor_oracle/memory/`.
+1. Edit `src/shor_oracle/field_arithmetic.rs`, `src/shor_oracle/scalar_strategy.rs`, `src/shor_oracle/architecture.mmd`, and notes under `src/shor_oracle/memory/`.
 2. Run `cargo fmt --check`.
 3. Run `./ecdlp.js run --note "short experiment label"` or `.\benchmark.ps1`.
 4. Record score, Toffoli, qubits, ops, and the idea tested in
@@ -53,6 +56,8 @@ for optimization workflow notes.
 
 - Use the opaque field emitter to reduce gates in the field kernels called by
   scalar multiplication and the final `aP + bQ` point addition.
+- Use the opaque scalar API to trade point-power storage, recomputation, and
+  cleanup without accessing raw point registers or raw gates.
 - Specialize the `F_31` field kernels for `31 = 2^5 - 1` while keeping them
   scoped to their field operands rather than keyed by public point registers.
 - Trade a small amount of scratch for fewer repeated equality checks.

@@ -9,6 +9,8 @@ use crate::ops_io::{OpSink, VecOpSink};
 
 mod builder;
 mod field_arithmetic;
+mod scalar_api;
+mod scalar_strategy;
 
 use builder::{const_bits, Builder, Signal, FIELD_MODULUS, WIDTH};
 
@@ -78,16 +80,6 @@ fn copy_point(builder: &mut Builder<impl OpSink>, point: PointValue, target: &Po
         vec![(point.x, target.x.clone()), (point.y, target.y.clone())],
         vec![(point.inf, target.inf)],
     );
-}
-
-fn xor_point_into(
-    builder: &mut Builder<impl OpSink>,
-    source: &PointRegister,
-    target: &PointRegister,
-) {
-    builder.xor_bits_into(&source.x, &target.x);
-    builder.xor_bits_into(&source.y, &target.y);
-    builder.xor_qubit_into(source.inf, target.inf);
 }
 
 fn swap_points(builder: &mut Builder<impl OpSink>, left: &PointRegister, right: &PointRegister) {
@@ -201,13 +193,12 @@ fn point_add_xor(
     let y_sum = builder.hold_qubits(WIDTH);
     let add_num = builder.hold_qubits(WIDTH);
     let add_den = builder.hold_qubits(WIDTH);
-    let add_den_inv = builder.hold_qubits(WIDTH);
-    let lambda_add = builder.hold_qubits(WIDTH);
     let x_squared = builder.hold_qubits(WIDTH);
     let double_num = builder.hold_qubits(WIDTH);
     let double_den = builder.hold_qubits(WIDTH);
-    let double_den_inv = builder.hold_qubits(WIDTH);
-    let lambda_double = builder.hold_qubits(WIDTH);
+    let selected_num = builder.hold_qubits(WIDTH);
+    let selected_den = builder.hold_qubits(WIDTH);
+    let selected_den_inv = builder.hold_qubits(WIDTH);
     let lambda = builder.hold_qubits(WIDTH);
     let lambda_squared = builder.hold_qubits(WIDTH);
     let x_minus_left = builder.hold_qubits(WIDTH);
@@ -220,22 +211,31 @@ fn point_add_xor(
         builder.xor_add_mod_into(&left.y, &right.y, &y_sum);
         builder.xor_sub_mod_into(&right.y, &left.y, &add_num);
         builder.xor_sub_mod_into(&right.x, &left.x, &add_den);
-        builder.xor_inv_mod_into(&add_den, &add_den_inv);
-        builder.xor_mul_mod_into(&add_num, &add_den_inv, &lambda_add);
 
         builder.xor_mul_mod_into(&left.x, &left.x, &x_squared);
         builder.xor_mul_const_mod_into(&x_squared, 3, &double_num);
         builder.xor_mul_const_mod_into(&left.y, 2, &double_den);
-        builder.xor_inv_mod_into(&double_den, &double_den_inv);
-        builder.xor_mul_mod_into(&double_num, &double_den_inv, &lambda_double);
 
         let same_point = add_same_point_signal(builder, left, right);
-        let lambda_bits = builder.mux_bits(
-            same_point,
-            &qubit_signals(&lambda_double),
-            &qubit_signals(&lambda_add),
+        let selected_num_bits = builder.mux_bits(
+            same_point.clone(),
+            &qubit_signals(&double_num),
+            &qubit_signals(&add_num),
         );
-        builder.finish_segment(vec![(lambda_bits, lambda.clone())], Vec::new());
+        let selected_den_bits = builder.mux_bits(
+            same_point,
+            &qubit_signals(&double_den),
+            &qubit_signals(&add_den),
+        );
+        builder.finish_segment(
+            vec![
+                (selected_num_bits, selected_num.clone()),
+                (selected_den_bits, selected_den.clone()),
+            ],
+            Vec::new(),
+        );
+        builder.xor_inv_mod_into(&selected_den, &selected_den_inv);
+        builder.xor_mul_mod_into(&selected_num, &selected_den_inv, &lambda);
 
         builder.xor_mul_mod_into(&lambda, &lambda, &lambda_squared);
         builder.xor_sub_mod_into(&lambda_squared, &left.x, &x_minus_left);
@@ -271,13 +271,12 @@ fn point_add_xor(
         y_sum,
         add_num,
         add_den,
-        add_den_inv,
-        lambda_add,
         x_squared,
         double_num,
         double_den,
-        double_den_inv,
-        lambda_double,
+        selected_num,
+        selected_den,
+        selected_den_inv,
         lambda,
         lambda_squared,
         x_minus_left,
@@ -301,31 +300,6 @@ fn point_neg_xor(builder: &mut Builder<impl OpSink>, point: &PointRegister, out:
         vec![(neg_y, out.y.clone())],
         vec![(Signal::qubit(point.inf), out.inf)],
     );
-}
-
-fn point_power_of_two_xor(
-    builder: &mut Builder<impl OpSink>,
-    point: &PointRegister,
-    bit: usize,
-    out: &PointRegister,
-) {
-    if bit == 0 {
-        xor_point_into(builder, point, out);
-        return;
-    }
-
-    let intermediates: Vec<PointRegister> = (0..bit).map(|_| hold_point(builder)).collect();
-    let compute_tape = builder.record(|builder| {
-        point_double_xor(builder, point, &intermediates[0]);
-        for index in 1..bit {
-            point_double_xor(builder, &intermediates[index - 1], &intermediates[index]);
-        }
-    });
-    xor_point_into(builder, &intermediates[bit - 1], out);
-    builder.append_reverse_tape(&compute_tape);
-    for point in intermediates {
-        release_point(builder, point);
-    }
 }
 
 fn xor_selected_point(
@@ -376,14 +350,11 @@ fn scalar_mul_into(
     scalar: &[QubitId],
     point: &PointRegister,
     out: &PointRegister,
-    multiple: &PointRegister,
 ) {
     builder.toggle(out.inf);
-    for bit in 0..WIDTH {
-        point_power_of_two_xor(builder, point, bit, multiple);
-        controlled_add_assign(builder, out, multiple, scalar[bit]);
-        point_power_of_two_xor(builder, point, bit, multiple);
-    }
+    let mut context = scalar_api::ScalarMulContext::new(builder, scalar, point, out);
+    scalar_strategy::scalar_mul_into(&mut context);
+    context.release_points();
 }
 
 pub fn build() -> Vec<Op> {
@@ -434,13 +405,11 @@ pub fn build_into<S: OpSink>(sink: S) -> S {
 
     let a_hold = hold_point(&mut builder);
     let b_hold = hold_point(&mut builder);
-    let multiple = hold_point(&mut builder);
-
     let a_tape = builder.record(|builder| {
-        scalar_mul_into(builder, &a, &p, &a_hold, &multiple);
+        scalar_mul_into(builder, &a, &p, &a_hold);
     });
     let b_tape = builder.record(|builder| {
-        scalar_mul_into(builder, &b, &q, &b_hold, &multiple);
+        scalar_mul_into(builder, &b, &q, &b_hold);
     });
 
     point_add_xor(&mut builder, &a_hold, &b_hold, &r);
@@ -448,7 +417,6 @@ pub fn build_into<S: OpSink>(sink: S) -> S {
     builder.append_reverse_tape(&b_tape);
     builder.append_reverse_tape(&a_tape);
 
-    release_point(&mut builder, multiple);
     release_point(&mut builder, b_hold);
     release_point(&mut builder, a_hold);
 

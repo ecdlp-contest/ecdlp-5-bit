@@ -236,10 +236,6 @@ impl<S: OpSink> Builder<S> {
         self.push_x(target);
     }
 
-    pub(crate) fn xor_qubit_into(&mut self, control: QubitId, target: QubitId) {
-        self.push_cx(control, target);
-    }
-
     pub(crate) fn xor_bits_into(&mut self, source: &[QubitId], target: &[QubitId]) {
         for (&source, &target) in source.iter().zip(target) {
             self.push_cx(source, target);

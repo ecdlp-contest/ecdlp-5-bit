@@ -20,6 +20,7 @@ const SHOR_TARGET_LABEL = "Target oracle: aP + bQ using in-place F_31 field arit
 const REQUIRED_ARCHITECTURE_LABELS = [SHOR_TARGET_LABEL, "Algorithm", "Optimization"];
 const REQUIRED_ARCHITECTURE_PATH = "src/shor_oracle/architecture.mmd";
 const FIELD_ARITHMETIC_PATH = "src/shor_oracle/field_arithmetic.rs";
+const SCALAR_STRATEGY_PATH = "src/shor_oracle/scalar_strategy.rs";
 const FIELD_ARITHMETIC_BANNED_PATTERNS = [
   {
     pattern: /\bQubitId\b/u,
@@ -70,6 +71,80 @@ const FIELD_ARITHMETIC_BANNED_PATTERNS = [
     message: "must not load external data or depend on process/environment state"
   }
 ];
+const SCALAR_STRATEGY_BANNED_PATTERNS = [
+  {
+    pattern: /\bQubitId\b/u,
+    message: "must use opaque ScalarBit handles instead of raw qubits"
+  },
+  {
+    pattern: /\bRegisterId\b/u,
+    message: "must not observe or construct register IDs"
+  },
+  {
+    pattern: /\bOperationType\b/u,
+    message: "must not construct primitive operations directly"
+  },
+  {
+    pattern: /\bOp\b/u,
+    message: "must not construct or inspect primitive operations directly"
+  },
+  {
+    pattern: /crate\s*::\s*circuit/u,
+    message: "must not import the raw circuit module"
+  },
+  {
+    pattern: /crate\s*::\s*ops_io/u,
+    message: "must not import the raw op sink module"
+  },
+  {
+    pattern: /\bSignal\b/u,
+    message: "must not manufacture Boolean signals directly"
+  },
+  {
+    pattern: /\bBuilder\b/u,
+    message: "must not access the trusted oracle builder"
+  },
+  {
+    pattern: /\bPointRegister\b/u,
+    message: "must not access raw point registers"
+  },
+  {
+    pattern: /\b(point_add_xor|point_double_xor|controlled_add_assign|hold_point|release_point|copy_point|mux_point|qubit_signals)\b/u,
+    message: "must use the scalar_api handle methods instead of trusted point internals"
+  },
+  {
+    pattern: /\bsuper\s*::/u,
+    message: "must import only crate::shor_oracle::scalar_api"
+  },
+  {
+    pattern: /\b(builder|field_arithmetic)\b/u,
+    message: "must not reach around scalar_api into trusted modules"
+  },
+  {
+    pattern: /\bunsafe\b/u,
+    message: "unsafe code is not allowed in the editable scalar strategy"
+  },
+  {
+    pattern: /\btransmute\b/u,
+    message: "must not inspect opaque scalar or point handles by transmutation"
+  },
+  {
+    pattern: /\bstatic\s+mut\b/u,
+    message: "must not keep mutable global state across scalar-strategy calls"
+  },
+  {
+    pattern: /\b(thread_local|OnceLock|LazyLock|Mutex|RwLock|Atomic[A-Za-z0-9_]*)\b/u,
+    message: "must not use global state to key behavior by call order"
+  },
+  {
+    pattern: /\b(HashMap|BTreeMap|HashSet|BTreeSet)\b/u,
+    message: "table-like containers are not allowed in scalar_strategy.rs"
+  },
+  {
+    pattern: /\b(include_bytes|include_str|std\s*::\s*fs|std\s*::\s*process|std\s*::\s*net|std\s*::\s*env)\b/u,
+    message: "must not load external data or depend on process/environment state"
+  }
+];
 
 const TRACKS = {
   "point-double-secp256k1-v1": {
@@ -79,9 +154,9 @@ const TRACKS = {
     defaultNoteFile: "src/point_double/memory/README.md"
   },
   "shor-ecdlp-5bit": {
-    gate: "fiat_shamir_shor_ecdlp_5bit_in_place_field_arithmetic_oracle_v1",
-    editablePaths: ["src/shor_oracle/field_arithmetic.rs", "src/shor_oracle/architecture.mmd", "src/shor_oracle/memory"],
-    requiredChecks: ["oracle correctness", "in-place F_31 field arithmetic composition", "input preservation", "phase cleanliness", "ancilla cleanup"],
+    gate: "fiat_shamir_shor_ecdlp_5bit_arithmetic_strategy_oracle_v2",
+    editablePaths: ["src/shor_oracle/field_arithmetic.rs", "src/shor_oracle/scalar_strategy.rs", "src/shor_oracle/architecture.mmd", "src/shor_oracle/memory"],
+    requiredChecks: ["oracle correctness", "in-place F_31 field arithmetic composition", "restricted scalar strategy API", "input preservation", "phase cleanliness", "ancilla cleanup"],
     defaultNoteFile: "src/shor_oracle/memory/README.md",
     architectureDiagram: REQUIRED_ARCHITECTURE_PATH
   },
@@ -134,7 +209,8 @@ Help:
 
 Agent guidance:
   Read README.md and benchmark.json first. Use command-level --help before each
-  step. Contestant code edits should stay in src/shor_oracle/field_arithmetic.rs.
+  step. Contestant code edits should stay in src/shor_oracle/field_arithmetic.rs
+  and src/shor_oracle/scalar_strategy.rs.
   Keep notes under src/shor_oracle/memory/ and update src/shor_oracle/architecture.mmd.
   The trusted builder owns raw qubits, primitive ops, register allocation, and
   segment boundaries.
@@ -176,7 +252,8 @@ Build artifacts should stay under .workspace/target. Put any extra scratch
 outputs or generated experiments under .workspace/ so they remain ignored by
 git and avoid system permission issues.
 
-Use this after modifying src/shor_oracle/field_arithmetic.rs or its notes/diagram.
+Use this after modifying src/shor_oracle/field_arithmetic.rs,
+src/shor_oracle/scalar_strategy.rs, or their notes/diagram.
 A valid run must pass all 9024
 Fiat-Shamir shots and produce score.json with status "ranked".
 
@@ -241,7 +318,7 @@ Options:
 
 Before submitting:
   1. Run ecdlp validate.
-  2. Make sure src/shor_oracle/memory/README.md explains the field-kernel approach.
+  2. Make sure src/shor_oracle/memory/README.md explains the field-kernel and scalar-schedule approach.
   3. Make sure src/shor_oracle/architecture.mmd matches the submitted arithmetic implementation.`,
 
   login: `ecdlp login
@@ -626,25 +703,40 @@ function firstLineMatching(text, pattern) {
   return 1;
 }
 
-function fieldArithmeticSourceErrors() {
-  const absolutePath = path.resolve(FIELD_ARITHMETIC_PATH);
-  if (!fs.existsSync(absolutePath)) return [`${FIELD_ARITHMETIC_PATH} is required`];
+function sourceBoundaryErrors(sourcePath, bannedPatterns) {
+  const absolutePath = path.resolve(sourcePath);
+  if (!fs.existsSync(absolutePath)) return [`${sourcePath} is required`];
   const stat = fs.statSync(absolutePath);
-  if (!stat.isFile()) return [`${FIELD_ARITHMETIC_PATH} must be a file`];
+  if (!stat.isFile()) return [`${sourcePath} must be a file`];
   const text = fs.readFileSync(absolutePath, "utf8");
   const errors = [];
-  for (const { pattern, message } of FIELD_ARITHMETIC_BANNED_PATTERNS) {
+  for (const { pattern, message } of bannedPatterns) {
     if (pattern.test(text)) {
       const line = firstLineMatching(text, pattern);
-      errors.push(`${FIELD_ARITHMETIC_PATH}:${line}: ${message}`);
+      errors.push(`${sourcePath}:${line}: ${message}`);
       pattern.lastIndex = 0;
     }
   }
   return errors;
 }
 
-function assertFieldArithmeticSourceBoundary() {
-  const errors = fieldArithmeticSourceErrors();
+function fieldArithmeticSourceErrors() {
+  return sourceBoundaryErrors(FIELD_ARITHMETIC_PATH, FIELD_ARITHMETIC_BANNED_PATTERNS);
+}
+
+function scalarStrategySourceErrors() {
+  return sourceBoundaryErrors(SCALAR_STRATEGY_PATH, SCALAR_STRATEGY_BANNED_PATTERNS);
+}
+
+function editableSourceBoundaryErrors() {
+  return [
+    ...fieldArithmeticSourceErrors(),
+    ...scalarStrategySourceErrors()
+  ];
+}
+
+function assertEditableSourceBoundary() {
+  const errors = editableSourceBoundaryErrors();
   if (errors.length > 0) throw new Error(errors[0]);
 }
 
@@ -677,7 +769,7 @@ function packageSubmission(args) {
     if (!fs.existsSync(path.resolve(editablePath))) throw new Error(`editable path does not exist: ${editablePath}`);
   }
   assertArchitectureDiagram(spec);
-  assertFieldArithmeticSourceBoundary();
+  assertEditableSourceBoundary();
   const architecturePath = spec.architectureDiagram;
   const architectureBytes = fs.statSync(path.resolve(architecturePath)).size;
   const architectureSha256 = sha256File(path.resolve(architecturePath));
@@ -828,6 +920,9 @@ function validatePackage(metadata, options = {}) {
   }
   for (const message of fieldArithmeticSourceErrors()) {
     error("FIELD_ARITHMETIC_BOUNDARY", message);
+  }
+  for (const message of scalarStrategySourceErrors()) {
+    error("SCALAR_STRATEGY_BOUNDARY", message);
   }
   for (const message of archivePackageErrors(spec, options.metadataPath || null, metadata)) {
     error("PACKAGE_ARCHIVE", message);

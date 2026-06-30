@@ -24,7 +24,7 @@ const NUM_TESTS: usize = 9024;
 const RESULTS_HEADER: &str =
     "timestamp\tcommit\ttoffoli\tccx\tccz\ttoffoli_depth\tclifford\tqubits\tops\tstatus\tnote\n";
 const SCORE_MODEL: &str = "balanced-qubit-toffoli-depth-v1";
-const VALIDATION_GATE: &str = "fiat_shamir_shor_ecdlp_5bit_in_place_field_arithmetic_oracle_v1";
+const VALIDATION_GATE: &str = "fiat_shamir_shor_ecdlp_5bit_arithmetic_strategy_oracle_v2";
 const FIELD_MODULUS: u16 = 31;
 const CURVE_A: u16 = 0;
 const GROUP_ORDER: u16 = 21;
@@ -573,7 +573,7 @@ fn write_score(
     let toffoli_depth = avg_toffoli_depth.round() as u64;
     let score = qubits as f64 * ((toffoli as f64) * (toffoli_depth as f64)).sqrt();
     let body = format!(
-        "{{\n  \"score\": {score},\n  \"score_model\": \"{SCORE_MODEL}\",\n  \"metrics\": {{\n    \"toffoli\": {toffoli},\n    \"ccx\": {ccx},\n    \"ccz\": {ccz},\n    \"toffoli_depth\": {toffoli_depth},\n    \"clifford\": {clifford},\n    \"qubits\": {qubits},\n    \"ops\": {ops_len}\n  }},\n  \"validation\": {{\n    \"shots\": {shots},\n    \"gate\": \"{VALIDATION_GATE}\",\n    \"checks\": [\"oracle correctness\", \"in-place F_31 field arithmetic composition\", \"input preservation\", \"phase cleanliness\", \"ancilla cleanup\"]\n  }},\n  \"artifact\": \"{OPS_PATH}\",\n  \"status\": \"ranked\"\n}}\n"
+        "{{\n  \"score\": {score},\n  \"score_model\": \"{SCORE_MODEL}\",\n  \"metrics\": {{\n    \"toffoli\": {toffoli},\n    \"ccx\": {ccx},\n    \"ccz\": {ccz},\n    \"toffoli_depth\": {toffoli_depth},\n    \"clifford\": {clifford},\n    \"qubits\": {qubits},\n    \"ops\": {ops_len}\n  }},\n  \"validation\": {{\n    \"shots\": {shots},\n    \"gate\": \"{VALIDATION_GATE}\",\n    \"checks\": [\"oracle correctness\", \"in-place F_31 field arithmetic composition\", \"restricted scalar strategy API\", \"input preservation\", \"phase cleanliness\", \"ancilla cleanup\"]\n  }},\n  \"artifact\": \"{OPS_PATH}\",\n  \"status\": \"ranked\"\n}}\n"
     );
     fs::write("score.json", body).expect("write score.json");
 }
@@ -752,4 +752,13 @@ fn main() {
     );
 
     println!("\n=== eval_circuit OK ===");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[ignore = "full trusted eval is expensive; run explicitly against ops.bin"]
+    fn full_eval_from_ops_artifact() {
+        super::main();
+    }
 }

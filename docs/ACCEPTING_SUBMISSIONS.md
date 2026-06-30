@@ -4,7 +4,8 @@ Maintainers should accept only source changes that preserve the public
 `shor-ecdlp-5bit` contract and improve the trusted score.
 
 Only Track 1 is active for public submissions. Accept code changes under
-`src/shor_oracle/field_arithmetic.rs` plus required updates to
+`src/shor_oracle/field_arithmetic.rs` and
+`src/shor_oracle/scalar_strategy.rs` plus required updates to
 `src/shor_oracle/architecture.mmd` and `src/shor_oracle/memory/`.
 `src/qft/` and `src/full_shor/` remain reserved and unscored until separate
 track contracts exist.
@@ -28,11 +29,13 @@ Confirm `./ecdlp.js package` and `./ecdlp.js validate` accept
 `src/shor_oracle/architecture.mmd`; the exact diagram contract is documented in
 `README.md`.
 
-Confirm validation does not report `FIELD_ARITHMETIC_BOUNDARY`. The editable
-source must not import raw qubits, raw circuit ops, the trusted builder, unsafe
-code, mutable global state, external data, or process/environment state. This is
-the mechanical guard against P/Q subgroup-index tables, direct `aP+bQ` tables,
-and replacement point-oracle tables.
+Confirm validation does not report `FIELD_ARITHMETIC_BOUNDARY` or
+`SCALAR_STRATEGY_BOUNDARY`. The editable source must not import raw qubits, raw
+circuit ops, raw point registers, the trusted builder, unsafe code, mutable
+global state, external data, or process/environment state. The scalar strategy
+must use only opaque scalar-bit and point handles. This is the mechanical guard
+against P/Q subgroup-index tables, direct `aP+bQ` tables, and replacement
+point-oracle tables.
 
 Confirm `score.json` contains:
 
@@ -40,7 +43,7 @@ Confirm `score.json` contains:
 status: ranked
 score_model: balanced-qubit-toffoli-depth-v1
 validation.shots: 9024
-validation.gate: fiat_shamir_shor_ecdlp_5bit_in_place_field_arithmetic_oracle_v1
+validation.gate: fiat_shamir_shor_ecdlp_5bit_arithmetic_strategy_oracle_v2
 ```
 
 The trusted run must report:
@@ -56,7 +59,7 @@ Package metadata must include:
 
 ```text
 benchmark: shor-ecdlp-5bit
-editablePaths: ["src/shor_oracle/field_arithmetic.rs", "src/shor_oracle/architecture.mmd", "src/shor_oracle/memory"]
+editablePaths: ["src/shor_oracle/field_arithmetic.rs", "src/shor_oracle/scalar_strategy.rs", "src/shor_oracle/architecture.mmd", "src/shor_oracle/memory"]
 artifactBytes: <ops.bin byte size>
 artifactSha256: <ops.bin sha256>
 ```
