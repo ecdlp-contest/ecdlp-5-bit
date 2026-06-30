@@ -228,7 +228,7 @@ Practical system requirements for this table-free baseline:
 | Eval memory | 1.35 GiB peak working set for the full 9024-shot trusted eval |
 | Recommended RAM | 16 GiB for OS and toolchain headroom; 32 GiB is comfortable |
 | 32 GiB machines | Supported for the current full trusted eval |
-| Eval parallelism | Set `ECDLP_EVAL_THREADS=8` for the measured run |
+| Eval parallelism | `ecdlp run` defaults to `ECDLP_EVAL_THREADS=8`; set the variable explicitly to override it |
 | Observed CPU use | 8 trusted eval workers; CPU utilization was not separately sampled in this measurement |
 | Observed build time | 3.18 seconds wall-clock using the existing release `build_circuit` binary |
 | Observed eval time | 55.97 seconds wall-clock using the release eval test harness with 8 workers |

@@ -31,6 +31,7 @@ jobs:
     timeout-minutes: 120
     env:
       ECDLP_API_URL: ${{ secrets.ECDLP_API_URL }}
+      ECDLP_EVAL_THREADS: "8"
       ECDLP_TRUSTED_WORKER_TOKEN: ${{ secrets.ECDLP_TRUSTED_WORKER_TOKEN }}
       ECDLP_WORKER_LIMIT: ${{ github.event.inputs.limit }}
       ECDLP_WORKER_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}

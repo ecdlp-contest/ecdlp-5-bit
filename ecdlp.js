@@ -13,6 +13,7 @@ const DEFAULT_API = "https://ecdlp.ai";
 const MAX_NOTE_BYTES = 10 * 1024;
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_ARCHITECTURE_BYTES = 1024 * 1024;
+const DEFAULT_EVAL_THREADS = "8";
 const REQUIRED_SHOTS = 9024;
 const SCORE_MODEL = "balanced-qubit-toffoli-depth-v1";
 const REQUIRED_ARTIFACT = "ops.bin";
@@ -263,6 +264,9 @@ Runs benchmark.json benchmarkCommand. The trusted evaluator writes:
   score.json
   results.tsv
 
+Defaults to ECDLP_EVAL_THREADS=${DEFAULT_EVAL_THREADS} unless that environment
+variable is already set.
+
 Build artifacts should stay under .workspace/target. Put any extra scratch
 outputs or generated experiments under .workspace/ so they remain ignored by
 git and avoid system permission issues.
@@ -486,6 +490,11 @@ function configuredTargetDirEnv() {
   return match ? { CARGO_TARGET_DIR: match[1] } : {};
 }
 
+function defaultBenchmarkEnv(field) {
+  if (field !== "benchmarkCommand" || process.env.ECDLP_EVAL_THREADS) return {};
+  return { ECDLP_EVAL_THREADS: DEFAULT_EVAL_THREADS };
+}
+
 function runManifestCommand(field, extraArgs = []) {
   const manifest = repoManifest();
   const command = manifest[field];
@@ -497,7 +506,7 @@ function runManifestCommand(field, extraArgs = []) {
   console.log(`> ${[program, ...finalArgs].join(" ")}`);
   const result = spawnSync(program, finalArgs, {
     cwd: process.cwd(),
-    env: { ...process.env, ...configuredTargetDirEnv() },
+    env: { ...process.env, ...configuredTargetDirEnv(), ...defaultBenchmarkEnv(field) },
     stdio: "inherit",
     shell: false
   });
