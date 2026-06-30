@@ -200,6 +200,23 @@ Current full trusted eval, measured with `ECDLP_EVAL_THREADS=8`:
 | Ops | 463,891,365 |
 | Score | 86,618,639,258.06989 |
 
+Practical system requirements for this table-free baseline:
+
+| Requirement | Observed / Recommended |
+| --- | --- |
+| Eval memory | `eval_circuit` peaked at about 24.2 GiB working set |
+| Recommended RAM | 64 GiB for OS and toolchain headroom |
+| 32 GiB machines | Not recommended for full trusted eval |
+| Eval parallelism | Set `ECDLP_EVAL_THREADS=8` for the measured run |
+| Observed CPU use | About seven effective cores during the 8-worker run |
+| Observed eval time | A little over 22 minutes on a 24-logical-processor host |
+| Artifact size | `ops.bin` was 850,950,855 bytes in compressed format |
+
+This explicit-arithmetic baseline is intentionally conservative for the
+no-table audit, but it is heavy for contest iteration. The compact contest
+contract should distinguish field-kernel implementation from forbidden
+point/scalar/oracle lookup tables if fast local validation is a priority.
+
 `Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count is
 the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir shots,
 matching the Google resource-estimate convention. The current baseline uses
