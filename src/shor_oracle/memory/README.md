@@ -41,8 +41,8 @@ select table-derived point values.
 Current static build shape for the table-free field-circuit baseline:
 
 ```text
-emitted ops : 209,409,729
-static CCX  : 143,435,925
+emitted ops : 96,759,125
+static CCX  : 50,680,101
 qubits      : 319
 ```
 
@@ -54,12 +54,15 @@ input failures     : 0
 oracle failures    : 0
 phase garbage      : 0 batches
 ancilla garbage    : 0 batches
-score              : 41,289,076,650.6699
-toffoli            : 143,435,925
-toffoli depth      : 116,796,825
-clifford           : 55,900,618
+score              : 14,796,120,586.080547
+toffoli            : 50,680,101
+toffoli depth      : 42,449,921
+clifford           : 38,535,682
 ```
 
+The current trusted builder specializes multiplication by constant `3` as a
+direct Mersenne-field add of `x + rot1(x)`, avoiding the large materialized
+Signal expression that previously dominated point-add and point-double slopes.
 Further useful improvements should recover some of the added live scratch or
-reduce field-kernel gates further, while preserving the 11-register ABI, phase
-cleanliness, and ancilla cleanup.
+reduce inverse/multiply field-kernel gates further, while preserving the
+11-register ABI, phase cleanliness, and ancilla cleanup.
