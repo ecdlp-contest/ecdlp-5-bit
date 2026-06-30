@@ -36,57 +36,6 @@ cd "$(ecdlp repo)"
 Use the CLI help to learn the workflow before acting:
 
 ecdlp --help
-ecdlp setup --help
-ecdlp preflight --help
-ecdlp run --help
-ecdlp package --help
-ecdlp validate --help
-ecdlp submit --help
-
-Then read README.md, benchmark.json, ./ecdlp.js, src/shor_oracle/mod.rs,
-src/shor_oracle/builder.rs, src/shor_oracle/scalar_api.rs,
-src/shor_oracle/field_arithmetic.rs, src/shor_oracle/scalar_strategy.rs,
-src/shor_oracle/architecture.mmd, and src/shor_oracle/memory/README.md.
-
-Goal: improve the scored reversible field arithmetic under
-src/shor_oracle/field_arithmetic.rs and the scalar point-power schedule under
-src/shor_oracle/scalar_strategy.rs. Keep src/shor_oracle/mod.rs,
-src/shor_oracle/scalar_api.rs, and src/shor_oracle/builder.rs as trusted oracle
-infrastructure. Do not edit the trusted harness, Cargo.toml, Cargo.lock,
-rust-toolchain, score.json, ops.bin, or results.tsv by hand.
-
-Use repo-local build and scratch paths under .workspace/ to avoid permission
-issues. This repo already routes Cargo builds to .workspace/target. If you need
-extra caches, generated probes, temporary files, or tool downloads, put them
-under .workspace/ and do not rely on system/global writable directories.
-When running Cargo directly, set CARGO_TARGET_DIR and temporary directories to
-repo-local .workspace paths as shown in the Local Workflow section.
-
-Local work does not require an API key. The user only needs to sign in with
-GitHub and create an API key when they are ready to submit to ecdlp.ai.
-
-Use this local loop:
-1. Run ecdlp setup if the repo is not already prepared.
-2. Modify src/shor_oracle/field_arithmetic.rs and/or
-   src/shor_oracle/scalar_strategy.rs, then update
-   src/shor_oracle/architecture.mmd plus src/shor_oracle/memory/README.md with
-   the approach and result.
-3. Run cargo fmt --check and ecdlp preflight for cheap local and PR contract
-   validation.
-4. Run ecdlp run --note "short description" only when validating a score or
-   submission candidate.
-5. Package with ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
-6. Run ecdlp validate before proposing submission.
-
-A valid submission must beat the current best score, preserve the documented
-oracle ABI, pass all 9024 trusted shots, include the Mermaid architecture
-diagram, and explain the algorithm and optimization choices in the note.
-
-When ready to submit, ask the user to open https://ecdlp.ai/account, sign in
-with GitHub, create an API key, and run:
-
-ecdlp login <api-key>
-ecdlp submit --watch
 ```
 
 ## Benchmark

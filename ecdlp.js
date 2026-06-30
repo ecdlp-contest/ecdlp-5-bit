@@ -206,23 +206,58 @@ Commands:
   leaderboard  Show accepted submissions for a track
 
 Help:
-  ecdlp <command> --help
-  ./ecdlp.js <command> --help
+  ecdlp setup --help
+  ecdlp preflight --help
+  ecdlp run --help
+  ecdlp package --help
+  ecdlp validate --help
+  ecdlp submit --help
 
-Agent guidance:
-  Read README.md and benchmark.json first. Use command-level --help before each
-  step. Contestant code edits should stay in src/shor_oracle/field_arithmetic.rs
-  and src/shor_oracle/scalar_strategy.rs.
-  Keep notes under src/shor_oracle/memory/ and update src/shor_oracle/architecture.mmd.
-  The trusted builder owns raw qubits, primitive ops, register allocation, and
-  segment boundaries.
-  Do not hand-edit score.json, ops.bin, results.tsv, or the trusted harness.
+Agent workflow:
+  Read README.md, benchmark.json, ./ecdlp.js, src/shor_oracle/mod.rs,
+  src/shor_oracle/builder.rs, src/shor_oracle/scalar_api.rs,
+  src/shor_oracle/field_arithmetic.rs, src/shor_oracle/scalar_strategy.rs,
+  src/shor_oracle/architecture.mmd, and src/shor_oracle/memory/README.md.
 
-Use repo-local build, cache, scratch, and tool paths under .workspace/ to avoid
-permission issues. Cargo is configured to build into .workspace/target.
+  Goal: improve the scored reversible field arithmetic under
+  src/shor_oracle/field_arithmetic.rs and the scalar point-power schedule under
+  src/shor_oracle/scalar_strategy.rs. Keep src/shor_oracle/mod.rs,
+  src/shor_oracle/scalar_api.rs, and src/shor_oracle/builder.rs as trusted
+  oracle infrastructure.
 
-Local work does not require an API key. Submitting does: the user must sign in
-with GitHub at ${DEFAULT_API}/account, create an API key, and run ecdlp login.`,
+  Do not edit the trusted harness, Cargo.toml, Cargo.lock, rust-toolchain,
+  score.json, ops.bin, or results.tsv by hand.
+
+  Use repo-local build and scratch paths under .workspace/ to avoid permission
+  issues. Cargo is configured to build into .workspace/target. Put extra caches,
+  generated probes, temporary files, or tool downloads under .workspace/. When
+  running Cargo directly, set CARGO_TARGET_DIR and temporary directories to
+  repo-local .workspace paths as shown in the README Local Workflow section.
+
+  Local work does not require an API key. Submitting does: the user must sign in
+  with GitHub at ${DEFAULT_API}/account, create an API key, and run ecdlp login.
+
+Local loop:
+  1. Run ecdlp setup if the repo is not already prepared.
+  2. Modify src/shor_oracle/field_arithmetic.rs and/or
+     src/shor_oracle/scalar_strategy.rs, then update
+     src/shor_oracle/architecture.mmd and src/shor_oracle/memory/README.md.
+  3. Run cargo fmt --check and ecdlp preflight.
+  4. Run ecdlp run --note "short description" only when validating a score or
+     submission candidate.
+  5. Run ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
+  6. Run ecdlp validate before proposing submission.
+
+Submission rule:
+  A valid submission must beat the current best score, preserve the documented
+  oracle ABI, pass all 9024 trusted shots, include the Mermaid architecture
+  diagram, and explain the algorithm and optimization choices in the note.
+
+When ready to submit:
+  Ask the user to open ${DEFAULT_API}/account, sign in with GitHub, create an
+  API key, and run:
+    ecdlp login <api-key>
+    ecdlp submit --watch`,
 
   setup: `ecdlp setup
 
