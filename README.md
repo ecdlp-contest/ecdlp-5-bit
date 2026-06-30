@@ -201,39 +201,39 @@ Current expected static shape for the table-free field-circuit baseline:
 | Metric | Value |
 | --- | ---: |
 | Input/output qubits | 43 |
-| Peak scratch and intermediates | 276 |
-| Logical qubits | 319 |
-| Static CCX | 50,680,101 |
-| Emitted ops | 96,759,125 |
+| Peak scratch and intermediates | 283 |
+| Logical qubits | 326 |
+| Static CCX | 4,624,825 |
+| Emitted ops | 25,749,133 |
 
 Current full trusted eval, measured with `ECDLP_EVAL_THREADS=8`:
 
 | Metric | Value |
 | --- | ---: |
 | Shots | 9024 OK |
-| Scored Toffoli count | 50,680,101 |
-| CCX | 50,680,101 |
+| Scored Toffoli count | 4,624,825 |
+| CCX | 4,624,825 |
 | CCZ | 0 |
-| Avg. executed Toffoli depth | 42,449,921 |
-| Clifford | 38,535,682 |
-| Qubits | 319 |
-| Ops | 96,759,125 |
-| Score | 14,796,120,586.080547 |
+| Avg. executed Toffoli depth | 3,477,469 |
+| Clifford | 13,980,686 |
+| Qubits | 326 |
+| Ops | 25,749,133 |
+| Score | 1,307,365,094.9206183 |
 
 Practical system requirements for this table-free baseline:
 
 | Requirement | Observed / Recommended |
 | --- | --- |
-| Build memory | 3.01 GiB peak working set for `build_circuit` on the current 96.8M-op artifact |
-| Eval memory | 5.05 GiB peak working set for the full 9024-shot trusted eval |
+| Build memory | 0.67 GiB peak working set for `build_circuit` on the current 25.7M-op artifact |
+| Eval memory | 1.35 GiB peak working set for the full 9024-shot trusted eval |
 | Recommended RAM | 16 GiB for OS and toolchain headroom; 32 GiB is comfortable |
 | 32 GiB machines | Supported for the current full trusted eval |
 | Eval parallelism | Set `ECDLP_EVAL_THREADS=8` for the measured run |
 | Observed CPU use | 8 trusted eval workers; CPU utilization was not separately sampled in this measurement |
-| Observed build time | 12.91 seconds wall-clock using the existing release `build_circuit` binary |
-| Observed eval time | 261.18 seconds wall-clock using the existing release `eval_circuit` binary with 8 workers |
-| Build plus eval time | About 4 minutes 34 seconds for measured release-binary build plus trusted eval, excluding Cargo compile/startup overhead |
-| Artifact size | `ops.bin` was 181,144,881 bytes in compressed format |
+| Observed build time | 3.18 seconds wall-clock using the existing release `build_circuit` binary |
+| Observed eval time | 55.97 seconds wall-clock using the release eval test harness with 8 workers |
+| Build plus eval time | About 59 seconds for measured release-binary build plus trusted eval, excluding Cargo compile/startup overhead |
+| Artifact size | `ops.bin` was 20,693,456 bytes in compressed format |
 
 This explicit-arithmetic baseline is intentionally conservative for the
 no-table audit, but it is heavy for contest iteration. The compact contest
@@ -249,9 +249,12 @@ registers or held point registers, then arithmetic scratch is uncomputed. The
 trusted builder expands field operations into reversible add/subtract circuits,
 cyclic-shift multiplication over the Mersenne modulus, and an exponentiation
 chain for inverse; multiplication by constant `3` is emitted as one direct
-Mersenne add of `x + rot1(x)` instead of a materialized expression tree. It does
-not synthesize field kernels from enumerated truth tables. A competitive
-submission should reduce field-kernel gates without
+Mersenne add of `x + rot1(x)` instead of a materialized expression tree. Field
+multiplication also copies the first selected rotated term directly instead of
+adding it to zero, and modular addition materializes the end-around-reduced bits
+plus the `31 -> 0` all-ones flag once before copying to the output. It does not
+synthesize field kernels from enumerated truth tables. A competitive submission
+should reduce field-kernel gates without
 turning the point/scalar layer into a lookup oracle.
 
 ## What You Can Edit
