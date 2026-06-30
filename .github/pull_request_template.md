@@ -29,8 +29,8 @@ Command:
 ecdlp setup
 cargo fmt --check
 ecdlp run --note "<note>"
-pwsh -NoProfile -ExecutionPolicy Bypass -File tools/package-submission.ps1 -NoteFile src/shor_oracle/memory/README.md -Model "<model>"
-ecdlp validate
+node ./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "<model>"
+node ./ecdlp.js validate
 ```
 
 Required output:

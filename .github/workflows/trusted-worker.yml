@@ -45,12 +45,5 @@ jobs:
           node-version: "22"
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Check PowerShell
-        shell: bash
-        run: |
-          if ! command -v pwsh >/dev/null 2>&1; then
-            echo "PowerShell (pwsh) is required by tools/package-submission.ps1" >&2
-            exit 1
-          fi
       - name: Run trusted worker
         run: node tools/trusted-worker.mjs

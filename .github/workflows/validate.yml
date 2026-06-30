@@ -9,8 +9,14 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Setup benchmark
         run: bash ./setup.sh
@@ -19,7 +25,12 @@ jobs:
         run: cargo fmt --check
 
       - name: Trusted benchmark
+        env:
+          ECDLP_EVAL_THREADS: "4"
         run: bash ./benchmark.sh --note "ci validation"
 
       - name: Package submission boundary
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools/package-submission.ps1 -NoteFile src/shor_oracle/memory/README.md -Model "CI"
+        run: node ./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "CI"
+
+      - name: Validate package
+        run: node ./ecdlp.js validate
