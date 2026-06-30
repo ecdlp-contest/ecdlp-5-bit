@@ -40,10 +40,10 @@ try {
   if ($score.status -ne "ranked") {
     throw "score.json status is not ranked"
   }
-  if ($score.validation.shots -ne 9024 -or $score.validation.gate -ne "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle") {
+  if ($score.validation.shots -ne 9024 -or $score.validation.gate -ne "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle_field_arithmetic_v4") {
     throw "score.json does not show the required 9024-shot Fiat-Shamir oracle gate"
   }
-  foreach ($requiredCheck in @("oracle correctness", "point addition correctness", "point doubling correctness", "input preservation", "phase cleanliness", "ancilla cleanup")) {
+  foreach ($requiredCheck in @("oracle correctness", "point addition correctness", "point doubling correctness", "field addition correctness", "field subtraction correctness", "field multiplication correctness", "field inversion correctness", "affine lambda witness", "input preservation", "phase cleanliness", "ancilla cleanup")) {
     if ($score.validation.checks -notcontains $requiredCheck) {
       throw "score.json validation.checks must include '$requiredCheck'"
     }

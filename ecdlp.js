@@ -16,7 +16,7 @@ const MAX_ARCHITECTURE_BYTES = 1024 * 1024;
 const REQUIRED_SHOTS = 9024;
 const SCORE_MODEL = "balanced-qubit-toffoli-depth-v1";
 const REQUIRED_ARTIFACT = "ops.bin";
-const SHOR_TARGET_LABEL = "Target oracle: aP + bQ plus P+Q and 2P checks";
+const SHOR_TARGET_LABEL = "Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks";
 const REQUIRED_ARCHITECTURE_LABELS = [SHOR_TARGET_LABEL, "Algorithm", "Optimization"];
 const REQUIRED_ARCHITECTURE_PATH = "src/shor_oracle/architecture.mmd";
 
@@ -28,9 +28,9 @@ const TRACKS = {
     defaultNoteFile: "src/point_double/memory/README.md"
   },
   "shor-ecdlp-5bit": {
-    gate: "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle",
+    gate: "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle_field_arithmetic_v4",
     editablePaths: ["src/shor_oracle"],
-    requiredChecks: ["oracle correctness", "point addition correctness", "point doubling correctness", "input preservation", "phase cleanliness", "ancilla cleanup"],
+    requiredChecks: ["oracle correctness", "point addition correctness", "point doubling correctness", "field addition correctness", "field subtraction correctness", "field multiplication correctness", "field inversion correctness", "affine lambda witness", "input preservation", "phase cleanliness", "ancilla cleanup"],
     defaultNoteFile: "src/shor_oracle/memory/README.md",
     architectureDiagram: REQUIRED_ARCHITECTURE_PATH
   },

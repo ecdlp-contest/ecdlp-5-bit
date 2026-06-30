@@ -19,6 +19,18 @@
 //! register 14: output (2P).x, 5 qubits, initially zero
 //! register 15: output (2P).y, 5 qubits, initially zero
 //! register 16: output (2P) infinity flag, 1 qubit, initially zero
+//! register 17: field selector, 2 qubits, preserved (0=F_31, 1=F_13, 2=F_11)
+//! register 18: field input x1, 5 qubits, preserved
+//! register 19: field input y1, 5 qubits, preserved
+//! register 20: field input x2, 5 qubits, preserved
+//! register 21: field input y2, 5 qubits, preserved
+//! register 22: field output x1+x2, 5 qubits, initially zero
+//! register 23: field output denominator x2-x1, 5 qubits, initially zero
+//! register 24: field output numerator y2-y1, 5 qubits, initially zero
+//! register 25: field output x1*y2, 5 qubits, initially zero
+//! register 26: field output (x2-x1)^-1 or 0, 5 qubits, initially zero
+//! register 27: field output lambda=(y2-y1)/(x2-x1) or 0, 5 qubits, initially zero
+//! register 28: field output lambda*(x2-x1), 5 qubits, initially zero
 //!
 //! The oracle computes:
 //!
@@ -43,6 +55,9 @@
 use crate::circuit::{Op, OperationType, QubitId, RegisterId};
 
 pub const FIELD_MODULUS: u16 = 31;
+pub const FIELD_SELECTOR_WIDTH: usize = 2;
+pub const FIELD_TEST_WIDTH: usize = 5;
+pub const FIELD_SPECS: [(u16, u16); 3] = [(0, 31), (1, 13), (2, 11)];
 pub const CURVE_A: u16 = 0;
 pub const GROUP_ORDER: u16 = 21;
 pub const WIDTH: usize = 5;
@@ -293,6 +308,14 @@ fn emit_point_xor(
     }
 }
 
+fn emit_scalar_xor(builder: &mut Builder, flag: QubitId, value: u16, target: &[QubitId]) {
+    for (bit, &qubit) in target.iter().enumerate() {
+        if ((value >> bit) & 1) != 0 {
+            builder.cx(flag, qubit);
+        }
+    }
+}
+
 fn emit_scalar_point_table(
     builder: &mut Builder,
     scalar: &[QubitId],
@@ -394,6 +417,114 @@ fn emit_point_double_table(
     }
 }
 
+fn test_add(left: u16, right: u16, modulus: u16) -> u16 {
+    (left + right) % modulus
+}
+
+fn test_sub(left: u16, right: u16, modulus: u16) -> u16 {
+    (left as i32 - right as i32).rem_euclid(modulus as i32) as u16
+}
+
+fn test_mul(left: u16, right: u16, modulus: u16) -> u16 {
+    ((left as u32 * right as u32) % modulus as u32) as u16
+}
+
+fn test_inv(value: u16, modulus: u16) -> u16 {
+    if value == 0 {
+        return 0;
+    }
+    let mut t = 0i32;
+    let mut new_t = 1i32;
+    let mut r = modulus as i32;
+    let mut new_r = value as i32;
+    while new_r != 0 {
+        let quotient = r / new_r;
+        (t, new_t) = (new_t, t - quotient * new_t);
+        (r, new_r) = (new_r, r - quotient * new_r);
+    }
+    t.rem_euclid(modulus as i32) as u16
+}
+
+fn emit_binary_field_table(
+    builder: &mut Builder,
+    selector: &[QubitId],
+    left: &[QubitId],
+    right: &[QubitId],
+    out: &[QubitId],
+    temps: &[QubitId],
+    op: fn(u16, u16, u16) -> u16,
+) {
+    let mut input = Vec::with_capacity(FIELD_SELECTOR_WIDTH + 2 * FIELD_TEST_WIDTH);
+    input.extend_from_slice(selector);
+    input.extend_from_slice(left);
+    input.extend_from_slice(right);
+
+    for &(selector_value, modulus) in &FIELD_SPECS {
+        for left_value in 0..modulus {
+            for right_value in 0..modulus {
+                let value = op(left_value, right_value, modulus);
+                if value == 0 {
+                    continue;
+                }
+                let input_value = u32::from(selector_value)
+                    | (u32::from(left_value) << FIELD_SELECTOR_WIDTH)
+                    | (u32::from(right_value) << (FIELD_SELECTOR_WIDTH + FIELD_TEST_WIDTH));
+                emit_exact_match_flag(builder, &input, input_value, temps);
+                emit_scalar_xor(builder, temps[input.len() - 2], value, out);
+                unemit_exact_match_flag(builder, &input, input_value, temps);
+            }
+        }
+    }
+}
+
+fn emit_unary_field_table(
+    builder: &mut Builder,
+    selector: &[QubitId],
+    input: &[QubitId],
+    out: &[QubitId],
+    temps: &[QubitId],
+    op: fn(u16, u16) -> u16,
+) {
+    let mut selector_and_input = Vec::with_capacity(FIELD_SELECTOR_WIDTH + FIELD_TEST_WIDTH);
+    selector_and_input.extend_from_slice(selector);
+    selector_and_input.extend_from_slice(input);
+
+    for &(selector_value, modulus) in &FIELD_SPECS {
+        for input_value in 0..modulus {
+            let value = op(input_value, modulus);
+            if value == 0 {
+                continue;
+            }
+            let match_value =
+                u32::from(selector_value) | (u32::from(input_value) << FIELD_SELECTOR_WIDTH);
+            emit_exact_match_flag(builder, &selector_and_input, match_value, temps);
+            emit_scalar_xor(builder, temps[selector_and_input.len() - 2], value, out);
+            unemit_exact_match_flag(builder, &selector_and_input, match_value, temps);
+        }
+    }
+}
+
+fn emit_register_copy(builder: &mut Builder, input: &[QubitId], out: &[QubitId]) {
+    for (&control, &target) in input.iter().zip(out) {
+        builder.cx(control, target);
+    }
+}
+
+fn emit_zero_when_denominator_is_zero(
+    builder: &mut Builder,
+    denominator: &[QubitId],
+    numerator: &[QubitId],
+    target: &[QubitId],
+    temps: &[QubitId],
+) {
+    emit_exact_match_flag(builder, denominator, 0, temps);
+    let zero_flag = temps[denominator.len() - 2];
+    for (&control, &target) in numerator.iter().zip(target) {
+        builder.ccx(zero_flag, control, target);
+    }
+    unemit_exact_match_flag(builder, denominator, 0, temps);
+}
+
 pub fn build() -> Vec<Op> {
     let mut builder = Builder::new();
     let a = builder.alloc_qubits(WIDTH);
@@ -413,6 +544,18 @@ pub fn build() -> Vec<Op> {
     let double_x = builder.alloc_qubits(WIDTH);
     let double_y = builder.alloc_qubits(WIDTH);
     let double_inf = builder.alloc_qubit();
+    let field_selector = builder.alloc_qubits(FIELD_SELECTOR_WIDTH);
+    let field_x1 = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_y1 = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_x2 = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_y2 = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_sum = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_den = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_num = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_product = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_den_inv = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_lambda = builder.alloc_qubits(FIELD_TEST_WIDTH);
+    let field_lambda_den = builder.alloc_qubits(FIELD_TEST_WIDTH);
 
     let ax = builder.alloc_qubits(WIDTH);
     let ay = builder.alloc_qubits(WIDTH);
@@ -421,6 +564,7 @@ pub fn build() -> Vec<Op> {
     let by = builder.alloc_qubits(WIDTH);
     let binf = builder.alloc_qubit();
     let temps = builder.alloc_qubits(2 * (2 * WIDTH + 1) - 1);
+    let field_temps = builder.alloc_qubits(FIELD_SELECTOR_WIDTH + 2 * FIELD_TEST_WIDTH - 1);
 
     builder.declare_qubit_register(&a);
     builder.declare_qubit_register(&b);
@@ -439,6 +583,18 @@ pub fn build() -> Vec<Op> {
     builder.declare_qubit_register(&double_x);
     builder.declare_qubit_register(&double_y);
     builder.declare_qubit_register(&[double_inf]);
+    builder.declare_qubit_register(&field_selector);
+    builder.declare_qubit_register(&field_x1);
+    builder.declare_qubit_register(&field_y1);
+    builder.declare_qubit_register(&field_x2);
+    builder.declare_qubit_register(&field_y2);
+    builder.declare_qubit_register(&field_sum);
+    builder.declare_qubit_register(&field_den);
+    builder.declare_qubit_register(&field_num);
+    builder.declare_qubit_register(&field_product);
+    builder.declare_qubit_register(&field_den_inv);
+    builder.declare_qubit_register(&field_lambda);
+    builder.declare_qubit_register(&field_lambda_den);
 
     emit_scalar_point_table(&mut builder, &a, &px, &py, pinf, &ax, &ay, ainf, &temps);
     emit_scalar_point_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
@@ -480,6 +636,67 @@ pub fn build() -> Vec<Op> {
     );
     emit_scalar_point_table(&mut builder, &b, &qx, &qy, qinf, &bx, &by, binf, &temps);
     emit_scalar_point_table(&mut builder, &a, &px, &py, pinf, &ax, &ay, ainf, &temps);
+    emit_binary_field_table(
+        &mut builder,
+        &field_selector,
+        &field_x1,
+        &field_x2,
+        &field_sum,
+        &field_temps,
+        test_add,
+    );
+    emit_binary_field_table(
+        &mut builder,
+        &field_selector,
+        &field_x2,
+        &field_x1,
+        &field_den,
+        &field_temps,
+        test_sub,
+    );
+    emit_binary_field_table(
+        &mut builder,
+        &field_selector,
+        &field_y2,
+        &field_y1,
+        &field_num,
+        &field_temps,
+        test_sub,
+    );
+    emit_binary_field_table(
+        &mut builder,
+        &field_selector,
+        &field_x1,
+        &field_y2,
+        &field_product,
+        &field_temps,
+        test_mul,
+    );
+    emit_unary_field_table(
+        &mut builder,
+        &field_selector,
+        &field_den,
+        &field_den_inv,
+        &field_temps,
+        test_inv,
+    );
+    emit_binary_field_table(
+        &mut builder,
+        &field_selector,
+        &field_num,
+        &field_den_inv,
+        &field_lambda,
+        &field_temps,
+        test_mul,
+    );
+    emit_register_copy(&mut builder, &field_num, &field_lambda_den);
+    emit_zero_when_denominator_is_zero(
+        &mut builder,
+        &field_den,
+        &field_num,
+        &field_lambda_den,
+        &field_temps,
+    );
 
     builder.ops
 }

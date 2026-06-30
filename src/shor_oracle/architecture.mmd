@@ -1,5 +1,5 @@
 flowchart TD
-  Target["Target oracle: aP + bQ plus P+Q and 2P checks"]
+  Target["Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks"]
   Algorithm["Algorithm"]
   Optimization["Optimization"]
 
@@ -8,6 +8,8 @@ flowchart TD
 
   Algorithm --> ABI["Preserve input registers: a, b, P, Q"]
   Algorithm --> Output["Write outputs: R = aP + bQ, S = P+Q, D = 2P"]
+  Algorithm --> FieldABI["Preserve field selector plus shared x1, y1, x2, y2 inputs"]
+  Algorithm --> FieldOut["Write F_31/F_13/F_11 witnesses: sum, den, num, product, inverse, lambda, lambda*den"]
   Algorithm --> Curve["Toy 5-bit secp256k1-style ECC curve over F31"]
   Algorithm --> Encoding["Affine point encoding: x, y, infinity flag"]
 
@@ -17,6 +19,7 @@ flowchart TD
   Baseline --> Add["Compute output R = A + B"]
   Baseline --> CheckAdd["Compute explicit point-add output S = P+Q"]
   Baseline --> CheckDouble["Compute explicit point-double output D = 2P"]
+  Baseline --> FieldCheck["Compute selected F_31/F_13/F_11 arithmetic witnesses"]
   Baseline --> UncomputeB["Uncompute scratch B"]
   Baseline --> UncomputeA["Uncompute scratch A"]
 
@@ -25,6 +28,7 @@ flowchart TD
   Add --> AddTable["Direct A,B-to-R point-addition lookup table"]
   CheckAdd --> CheckAddTable["Direct P,Q-to-S point-addition lookup table"]
   CheckDouble --> DoubleTable["Direct P-to-D point-doubling lookup table"]
+  FieldCheck --> FieldTables["Direct selector-conditioned tables over shared field inputs"]
   UncomputeB --> Cleanup["Restore scratch and ancilla to zero"]
   UncomputeA --> Cleanup
 
@@ -33,6 +37,7 @@ flowchart TD
   AddTable --> MatchFlags
   CheckAddTable --> MatchFlags
   DoubleTable --> MatchFlags
+  FieldTables --> MatchFlags
   MatchFlags --> PointXor["Conditionally XOR selected point bits into target registers"]
 
   Curve --> PointAddition["Point addition checked directly by S = P+Q"]
@@ -40,9 +45,11 @@ flowchart TD
   PointAddition --> CheckAddTable
   PointDoubling --> DoubleTable
 
-  ABI --> Validation["Trusted validation: oracle correctness, point add, point double, input preservation, phase cleanliness, ancilla cleanup"]
+  ABI --> Validation["Trusted validation: oracle correctness, point add, point double, F_31/F_13/F_11 field arithmetic, input preservation, phase cleanliness, ancilla cleanup"]
+  FieldABI --> Validation
   Cleanup --> Validation
   Output --> Validation
+  FieldOut --> Validation
 
   Algorithm --> Knobs["Structural knobs exposed to optimization"]
   APTable --> K1["Knob: replace scalar-point lookup with double-and-add or windowing"]
@@ -50,9 +57,10 @@ flowchart TD
   AddTable --> K3["Knob: replace point-addition lookup with arithmetic formula"]
   CheckAddTable --> K4["Knob: reuse point-add arithmetic for both R and S"]
   DoubleTable --> K5["Knob: implement doubling as a specialized formula"]
-  MatchFlags --> K6["Knob: reduce exact-match flag CCX chains"]
-  Cleanup --> K7["Knob: reschedule uncompute and ancilla reuse"]
-  Encoding --> K8["Knob: adjust point and infinity representation"]
+  FieldTables --> K6["Knob: replace F_31/F_13/F_11 witness lookups with reusable field arithmetic"]
+  MatchFlags --> K7["Knob: reduce exact-match flag CCX chains"]
+  Cleanup --> K8["Knob: reschedule uncompute and ancilla reuse"]
+  Encoding --> K9["Knob: adjust point and infinity representation"]
 
   K1 --> Optimization
   K2 --> Optimization
@@ -62,6 +70,7 @@ flowchart TD
   K6 --> Optimization
   K7 --> Optimization
   K8 --> Optimization
+  K9 --> Optimization
 
   Optimization --> Islands["Candidate optimization islands"]
   Islands --> I1["Island: smaller lookup tables"]
@@ -69,6 +78,7 @@ flowchart TD
   Islands --> I3["Island: lower peak qubits"]
   Islands --> I4["Island: cheaper uncompute"]
   Islands --> I5["Island: arithmetic instead of tables"]
+  Islands --> I6["Island: shared F_31, F_13, and F_11 add, subtract, multiply, inverse machinery"]
 
   Optimization --> Methods["Search and comparison methods"]
   Methods --> M1["Manual algebraic simplification"]
@@ -80,6 +90,7 @@ flowchart TD
   I3 --> Eval
   I4 --> Eval
   I5 --> Eval
+  I6 --> Eval
   M1 --> Eval
   M2 --> Eval
   M3 --> Eval
@@ -92,4 +103,5 @@ flowchart TD
   Choice --> Add
   Choice --> CheckAdd
   Choice --> CheckDouble
+  Choice --> FieldCheck
   Choice --> Cleanup

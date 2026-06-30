@@ -2,8 +2,8 @@
 //!
 //! Reads the op stream emitted by `build_circuit` from `ops.bin`, validates the
 //! framing, simulates 9024 Fiat-Shamir 5-bit Shor ECDLP variable-base oracle
-//! shots, checks phase and ancilla cleanup, then writes `score.json` and
-//! `results.tsv`.
+//! shots, checks independent field-arithmetic witnesses, phase and ancilla
+//! cleanup, then writes `score.json` and `results.tsv`.
 
 use alloy_primitives::U256;
 use ecdlp_5_bit::circuit::{
@@ -28,17 +28,53 @@ const NUM_TESTS: usize = 9024;
 const RESULTS_HEADER: &str =
     "timestamp\tcommit\ttoffoli\tccx\tccz\ttoffoli_depth\tclifford\tqubits\tops\tstatus\tnote\n";
 const SCORE_MODEL: &str = "balanced-qubit-toffoli-depth-v1";
-const VALIDATION_GATE: &str = "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle";
+const VALIDATION_GATE: &str =
+    "fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle_field_arithmetic_v4";
 const FIELD_MODULUS: u16 = 31;
 const CURVE_A: u16 = 0;
 const GROUP_ORDER: u16 = 21;
 const WIDTH: usize = 5;
+const ORACLE_REGISTER_COUNT: usize = 17;
+const FIELD_SELECTOR_WIDTH: usize = 2;
+const FIELD_REGISTER_WIDTH: usize = 5;
+const FIELD_REGISTER_COUNT: usize = 12;
+const FIELD_SPECS: [FieldSpec; 3] = [
+    FieldSpec {
+        label: "F_31",
+        modulus: 31,
+    },
+    FieldSpec {
+        label: "F_13",
+        modulus: 13,
+    },
+    FieldSpec {
+        label: "F_11",
+        modulus: 11,
+    },
+];
+const REGISTER_COUNT: usize = ORACLE_REGISTER_COUNT + FIELD_REGISTER_COUNT;
+const FIELD_EDGE_CASES: [(u16, u16, u16, u16); 8] = [
+    (0, 0, 0, 0),
+    (0, 5, 0, 7),
+    (30, 30, 0, 1),
+    (1, 2, 30, 29),
+    (7, 3, 4, 8),
+    (30, 0, 30, 30),
+    (5, 9, 6, 9),
+    (3, 4, 3, 9),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Point {
     x: u16,
     y: u16,
     infinity: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FieldSpec {
+    label: &'static str,
+    modulus: u16,
 }
 
 const BASE_POINT: Point = Point {
@@ -49,6 +85,18 @@ const BASE_POINT: Point = Point {
 
 fn mod_i(value: i32) -> u16 {
     value.rem_euclid(FIELD_MODULUS as i32) as u16
+}
+
+fn add_test_field(left: u16, right: u16, modulus: u16) -> u16 {
+    (left + right) % modulus
+}
+
+fn sub_test_field(left: u16, right: u16, modulus: u16) -> u16 {
+    (left as i32 - right as i32).rem_euclid(modulus as i32) as u16
+}
+
+fn mul_test_field(left: u16, right: u16, modulus: u16) -> u16 {
+    ((left as u32 * right as u32) % modulus as u32) as u16
 }
 
 fn inv_mod(value: u16) -> Option<u16> {
@@ -69,6 +117,80 @@ fn inv_mod(value: u16) -> Option<u16> {
     } else {
         Some(mod_i(t))
     }
+}
+
+fn inv_test_field(value: u16, modulus: u16) -> Option<u16> {
+    if value == 0 {
+        return None;
+    }
+    let mut t = 0i32;
+    let mut new_t = 1i32;
+    let mut r = modulus as i32;
+    let mut new_r = value as i32;
+    while new_r != 0 {
+        let quotient = r / new_r;
+        (t, new_t) = (new_t, t - quotient * new_t);
+        (r, new_r) = (new_r, r - quotient * new_r);
+    }
+    if r > 1 {
+        None
+    } else {
+        Some(t.rem_euclid(modulus as i32) as u16)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FieldInput {
+    x1: u16,
+    y1: u16,
+    x2: u16,
+    y2: u16,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TestInput {
+    a: u16,
+    b: u16,
+    p: Point,
+    q: Point,
+    field_selector: usize,
+    field: FieldInput,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FieldWitness {
+    sum: u16,
+    den: u16,
+    num: u16,
+    product: u16,
+    den_inv: u16,
+    lambda: u16,
+    lambda_den: u16,
+}
+
+fn expected_field_witness(input: FieldInput, modulus: u16) -> FieldWitness {
+    let den = sub_test_field(input.x2, input.x1, modulus);
+    let num = sub_test_field(input.y2, input.y1, modulus);
+    let den_inv = inv_test_field(den, modulus).unwrap_or(0);
+    let lambda = if den == 0 {
+        0
+    } else {
+        mul_test_field(num, den_inv, modulus)
+    };
+    FieldWitness {
+        sum: add_test_field(input.x1, input.x2, modulus),
+        den,
+        num,
+        product: mul_test_field(input.x1, input.y2, modulus),
+        den_inv,
+        lambda,
+        lambda_den: mul_test_field(lambda, den, modulus),
+    }
+}
+
+fn field_reg(block: usize, offset: usize) -> usize {
+    debug_assert_eq!(block, 0);
+    ORACLE_REGISTER_COUNT + offset
 }
 
 fn curve_add(left: Point, right: Point) -> Point {
@@ -258,6 +380,7 @@ struct SeedReport {
     input_failures: usize,
     phase_garbage_batches: usize,
     ancilla_garbage_batches: usize,
+    field_failures: usize,
     fail_reason: Option<String>,
 }
 
@@ -271,18 +394,35 @@ fn run_tests(
 ) -> SeedReport {
     let mut inputs = Vec::with_capacity(target_shots);
     while inputs.len() < target_shots {
-        let mut bytes = [0u8; 4];
+        let mut bytes = [0u8; 8];
         xof.read(&mut bytes);
+        let i = inputs.len();
         let a = u16::from(bytes[0]) & ((1u16 << WIDTH) - 1);
         let b = u16::from(bytes[1]) & ((1u16 << WIDTH) - 1);
         let p_scalar = u16::from(bytes[2]) % GROUP_ORDER;
         let q_scalar = u16::from(bytes[3]) % GROUP_ORDER;
-        inputs.push((
+        let raw_field = FIELD_EDGE_CASES.get(i).copied().unwrap_or((
+            u16::from(bytes[4]),
+            u16::from(bytes[5]),
+            u16::from(bytes[6]),
+            u16::from(bytes[7]),
+        ));
+        let field_selector = i % FIELD_SPECS.len();
+        let spec = FIELD_SPECS[field_selector];
+        let field = FieldInput {
+            x1: raw_field.0 % spec.modulus,
+            y1: raw_field.1 % spec.modulus,
+            x2: raw_field.2 % spec.modulus,
+            y2: raw_field.3 % spec.modulus,
+        };
+        inputs.push(TestInput {
             a,
             b,
-            scalar_mul(p_scalar, BASE_POINT),
-            scalar_mul(q_scalar, BASE_POINT),
-        ));
+            p: scalar_mul(p_scalar, BASE_POINT),
+            q: scalar_mul(q_scalar, BASE_POINT),
+            field_selector,
+            field,
+        });
     }
 
     let n = inputs.len();
@@ -295,6 +435,7 @@ fn run_tests(
     let mut input_failures = 0usize;
     let mut phase_garbage_batches = 0usize;
     let mut ancilla_garbage_batches = 0usize;
+    let mut field_failures = 0usize;
 
     const BATCH: usize = 64;
     let num_batches = n.div_ceil(BATCH);
@@ -305,22 +446,55 @@ fn run_tests(
         sim.clear_for_shot();
         for shot in 0..bs {
             let i = batch * BATCH + shot;
-            let (a, b, p, q) = inputs[i];
-            sim.set_register(&layout_regs[0], U256::from(a), shot);
-            sim.set_register(&layout_regs[1], U256::from(b), shot);
-            sim.set_register(&layout_regs[2], U256::from(p.x), shot);
-            sim.set_register(&layout_regs[3], U256::from(p.y), shot);
-            sim.set_register(&layout_regs[4], U256::from(u16::from(p.infinity)), shot);
-            sim.set_register(&layout_regs[5], U256::from(q.x), shot);
-            sim.set_register(&layout_regs[6], U256::from(q.y), shot);
-            sim.set_register(&layout_regs[7], U256::from(u16::from(q.infinity)), shot);
+            let input = inputs[i];
+            sim.set_register(&layout_regs[0], U256::from(input.a), shot);
+            sim.set_register(&layout_regs[1], U256::from(input.b), shot);
+            sim.set_register(&layout_regs[2], U256::from(input.p.x), shot);
+            sim.set_register(&layout_regs[3], U256::from(input.p.y), shot);
+            sim.set_register(
+                &layout_regs[4],
+                U256::from(u16::from(input.p.infinity)),
+                shot,
+            );
+            sim.set_register(&layout_regs[5], U256::from(input.q.x), shot);
+            sim.set_register(&layout_regs[6], U256::from(input.q.y), shot);
+            sim.set_register(
+                &layout_regs[7],
+                U256::from(u16::from(input.q.infinity)),
+                shot,
+            );
+            sim.set_register(
+                &layout_regs[field_reg(0, 0)],
+                U256::from(input.field_selector),
+                shot,
+            );
+            sim.set_register(
+                &layout_regs[field_reg(0, 1)],
+                U256::from(input.field.x1),
+                shot,
+            );
+            sim.set_register(
+                &layout_regs[field_reg(0, 2)],
+                U256::from(input.field.y1),
+                shot,
+            );
+            sim.set_register(
+                &layout_regs[field_reg(0, 3)],
+                U256::from(input.field.x2),
+                shot,
+            );
+            sim.set_register(
+                &layout_regs[field_reg(0, 4)],
+                U256::from(input.field.y2),
+                shot,
+            );
         }
 
         sim.apply_iter_masked(ops.iter(), cond_mask);
 
         for shot in 0..bs {
             let i = batch * BATCH + shot;
-            let (a_expected, b_expected, p_expected, q_expected) = inputs[i];
+            let input = inputs[i];
             let a_in = sim.get_register(&layout_regs[0], shot).to::<u16>();
             let b_in = sim.get_register(&layout_regs[1], shot).to::<u16>();
             let px_in = sim.get_register(&layout_regs[2], shot).to::<u16>();
@@ -329,25 +503,54 @@ fn run_tests(
             let qx_in = sim.get_register(&layout_regs[5], shot).to::<u16>();
             let qy_in = sim.get_register(&layout_regs[6], shot).to::<u16>();
             let qinf_in = sim.get_register(&layout_regs[7], shot).to::<u16>() != 0;
-            if a_in != a_expected
-                || b_in != b_expected
-                || px_in != p_expected.x
-                || py_in != p_expected.y
-                || pinf_in != p_expected.infinity
-                || qx_in != q_expected.x
-                || qy_in != q_expected.y
-                || qinf_in != q_expected.infinity
+            let selector_in = sim
+                .get_register(&layout_regs[field_reg(0, 0)], shot)
+                .to::<u16>();
+            let x1_in = sim
+                .get_register(&layout_regs[field_reg(0, 1)], shot)
+                .to::<u16>();
+            let y1_in = sim
+                .get_register(&layout_regs[field_reg(0, 2)], shot)
+                .to::<u16>();
+            let x2_in = sim
+                .get_register(&layout_regs[field_reg(0, 3)], shot)
+                .to::<u16>();
+            let y2_in = sim
+                .get_register(&layout_regs[field_reg(0, 4)], shot)
+                .to::<u16>();
+            let field_inputs_ok = selector_in == input.field_selector as u16
+                && x1_in == input.field.x1
+                && y1_in == input.field.y1
+                && x2_in == input.field.x2
+                && y2_in == input.field.y2;
+            if a_in != input.a
+                || b_in != input.b
+                || px_in != input.p.x
+                || py_in != input.p.y
+                || pinf_in != input.p.infinity
+                || qx_in != input.q.x
+                || qy_in != input.q.y
+                || qinf_in != input.q.infinity
+                || !field_inputs_ok
             {
                 input_failures += 1;
                 if fail_reason.is_none() {
                     fail_reason = Some(format!(
-                        "INPUT MISMATCH shot {i}: expected a={a_expected} b={b_expected} P=({},{},inf={}) Q=({},{},inf={}), got a={a_in} b={b_in} P=({px_in},{py_in},inf={pinf_in}) Q=({qx_in},{qy_in},inf={qinf_in})",
-                        p_expected.x,
-                        p_expected.y,
-                        p_expected.infinity,
-                        q_expected.x,
-                        q_expected.y,
-                        q_expected.infinity
+                        "INPUT MISMATCH shot {i}: expected a={} b={} P=({},{},inf={}) Q=({},{},inf={}) field {} selector={} values=({},{},{},{}), got a={a_in} b={b_in} P=({px_in},{py_in},inf={pinf_in}) Q=({qx_in},{qy_in},inf={qinf_in}) selector={selector_in} values=({x1_in},{y1_in},{x2_in},{y2_in})",
+                        input.a,
+                        input.b,
+                        input.p.x,
+                        input.p.y,
+                        input.p.infinity,
+                        input.q.x,
+                        input.q.y,
+                        input.q.infinity,
+                        FIELD_SPECS[input.field_selector].label,
+                        input.field_selector,
+                        input.field.x1,
+                        input.field.y1,
+                        input.field.x2,
+                        input.field.y2
                     ));
                 }
                 ok = false;
@@ -357,7 +560,7 @@ fn run_tests(
             let got_x = sim.get_register(&layout_regs[8], shot).to::<u16>();
             let got_y = sim.get_register(&layout_regs[9], shot).to::<u16>();
             let got_inf = sim.get_register(&layout_regs[10], shot).to::<u16>() != 0;
-            let expected = oracle_point(a_expected, b_expected, p_expected, q_expected);
+            let expected = oracle_point(input.a, input.b, input.p, input.q);
             let output_ok = if expected.infinity {
                 got_inf && got_x == 0 && got_y == 0
             } else {
@@ -367,13 +570,15 @@ fn run_tests(
                 oracle_failures += 1;
                 if fail_reason.is_none() {
                     fail_reason = Some(format!(
-                        "ORACLE MISMATCH shot {i}: a={a_expected} b={b_expected} P=({},{},inf={}) Q=({},{},inf={}) got=({got_x},{got_y},inf={got_inf}) expected=({},{},inf={})",
-                        p_expected.x,
-                        p_expected.y,
-                        p_expected.infinity,
-                        q_expected.x,
-                        q_expected.y,
-                        q_expected.infinity,
+                        "ORACLE MISMATCH shot {i}: a={} b={} P=({},{},inf={}) Q=({},{},inf={}) got=({got_x},{got_y},inf={got_inf}) expected=({},{},inf={})",
+                        input.a,
+                        input.b,
+                        input.p.x,
+                        input.p.y,
+                        input.p.infinity,
+                        input.q.x,
+                        input.q.y,
+                        input.q.infinity,
                         expected.x,
                         expected.y,
                         expected.infinity
@@ -385,7 +590,7 @@ fn run_tests(
             let got_add_x = sim.get_register(&layout_regs[11], shot).to::<u16>();
             let got_add_y = sim.get_register(&layout_regs[12], shot).to::<u16>();
             let got_add_inf = sim.get_register(&layout_regs[13], shot).to::<u16>() != 0;
-            let expected_add = curve_add(p_expected, q_expected);
+            let expected_add = curve_add(input.p, input.q);
             let add_ok = if expected_add.infinity {
                 got_add_inf && got_add_x == 0 && got_add_y == 0
             } else {
@@ -396,12 +601,12 @@ fn run_tests(
                 if fail_reason.is_none() {
                     fail_reason = Some(format!(
                         "POINT ADD MISMATCH shot {i}: P=({},{},inf={}) Q=({},{},inf={}) got=({got_add_x},{got_add_y},inf={got_add_inf}) expected=({},{},inf={})",
-                        p_expected.x,
-                        p_expected.y,
-                        p_expected.infinity,
-                        q_expected.x,
-                        q_expected.y,
-                        q_expected.infinity,
+                        input.p.x,
+                        input.p.y,
+                        input.p.infinity,
+                        input.q.x,
+                        input.q.y,
+                        input.q.infinity,
                         expected_add.x,
                         expected_add.y,
                         expected_add.infinity
@@ -413,7 +618,7 @@ fn run_tests(
             let got_double_x = sim.get_register(&layout_regs[14], shot).to::<u16>();
             let got_double_y = sim.get_register(&layout_regs[15], shot).to::<u16>();
             let got_double_inf = sim.get_register(&layout_regs[16], shot).to::<u16>() != 0;
-            let expected_double = curve_add(p_expected, p_expected);
+            let expected_double = curve_add(input.p, input.p);
             let double_ok = if expected_double.infinity {
                 got_double_inf && got_double_x == 0 && got_double_y == 0
             } else {
@@ -426,12 +631,74 @@ fn run_tests(
                 if fail_reason.is_none() {
                     fail_reason = Some(format!(
                         "POINT DOUBLE MISMATCH shot {i}: P=({},{},inf={}) got=({got_double_x},{got_double_y},inf={got_double_inf}) expected=({},{},inf={})",
-                        p_expected.x,
-                        p_expected.y,
-                        p_expected.infinity,
+                        input.p.x,
+                        input.p.y,
+                        input.p.infinity,
                         expected_double.x,
                         expected_double.y,
                         expected_double.infinity
+                    ));
+                }
+                ok = false;
+            }
+
+            let spec = FIELD_SPECS[input.field_selector];
+            let expected_field = expected_field_witness(input.field, spec.modulus);
+            let got_sum = sim
+                .get_register(&layout_regs[field_reg(0, 5)], shot)
+                .to::<u16>();
+            let got_den = sim
+                .get_register(&layout_regs[field_reg(0, 6)], shot)
+                .to::<u16>();
+            let got_num = sim
+                .get_register(&layout_regs[field_reg(0, 7)], shot)
+                .to::<u16>();
+            let got_product = sim
+                .get_register(&layout_regs[field_reg(0, 8)], shot)
+                .to::<u16>();
+            let got_den_inv = sim
+                .get_register(&layout_regs[field_reg(0, 9)], shot)
+                .to::<u16>();
+            let got_lambda = sim
+                .get_register(&layout_regs[field_reg(0, 10)], shot)
+                .to::<u16>();
+            let got_lambda_den = sim
+                .get_register(&layout_regs[field_reg(0, 11)], shot)
+                .to::<u16>();
+            let field_ok = got_sum == expected_field.sum
+                && got_den == expected_field.den
+                && got_num == expected_field.num
+                && got_product == expected_field.product
+                && got_den_inv == expected_field.den_inv
+                && got_lambda == expected_field.lambda
+                && got_lambda_den == expected_field.lambda_den
+                && got_sum < spec.modulus
+                && got_den < spec.modulus
+                && got_num < spec.modulus
+                && got_product < spec.modulus
+                && got_den_inv < spec.modulus
+                && got_lambda < spec.modulus
+                && got_lambda_den < spec.modulus
+                && (expected_field.den == 0
+                    || (mul_test_field(got_den, got_den_inv, spec.modulus) == 1
+                        && mul_test_field(got_lambda, got_den, spec.modulus) == got_num));
+            if !field_ok {
+                field_failures += 1;
+                if fail_reason.is_none() {
+                    fail_reason = Some(format!(
+                        "{} FIELD ARITHMETIC MISMATCH shot {i}: input x1={} y1={} x2={} y2={} got sum={got_sum} den={got_den} num={got_num} product={got_product} den_inv={got_den_inv} lambda={got_lambda} lambda_den={got_lambda_den}; expected sum={} den={} num={} product={} den_inv={} lambda={} lambda_den={}",
+                        spec.label,
+                        input.field.x1,
+                        input.field.y1,
+                        input.field.x2,
+                        input.field.y2,
+                        expected_field.sum,
+                        expected_field.den,
+                        expected_field.num,
+                        expected_field.product,
+                        expected_field.den_inv,
+                        expected_field.lambda,
+                        expected_field.lambda_den
                     ));
                 }
                 ok = false;
@@ -496,6 +763,7 @@ fn run_tests(
         input_failures,
         phase_garbage_batches,
         ancilla_garbage_batches,
+        field_failures,
         fail_reason,
     }
 }
@@ -589,7 +857,7 @@ fn write_score(
     let toffoli_depth = avg_toffoli_depth.round() as u64;
     let score = qubits as f64 * ((toffoli as f64) * (toffoli_depth as f64)).sqrt();
     let body = format!(
-        "{{\n  \"score\": {score},\n  \"score_model\": \"{SCORE_MODEL}\",\n  \"metrics\": {{\n    \"toffoli\": {toffoli},\n    \"ccx\": {ccx},\n    \"ccz\": {ccz},\n    \"toffoli_depth\": {toffoli_depth},\n    \"clifford\": {clifford},\n    \"qubits\": {qubits},\n    \"ops\": {ops_len}\n  }},\n  \"validation\": {{\n    \"shots\": {shots},\n    \"gate\": \"{VALIDATION_GATE}\",\n    \"checks\": [\"oracle correctness\", \"point addition correctness\", \"point doubling correctness\", \"input preservation\", \"phase cleanliness\", \"ancilla cleanup\"]\n  }},\n  \"artifact\": \"{OPS_PATH}\",\n  \"status\": \"ranked\"\n}}\n"
+        "{{\n  \"score\": {score},\n  \"score_model\": \"{SCORE_MODEL}\",\n  \"metrics\": {{\n    \"toffoli\": {toffoli},\n    \"ccx\": {ccx},\n    \"ccz\": {ccz},\n    \"toffoli_depth\": {toffoli_depth},\n    \"clifford\": {clifford},\n    \"qubits\": {qubits},\n    \"ops\": {ops_len}\n  }},\n  \"validation\": {{\n    \"shots\": {shots},\n    \"gate\": \"{VALIDATION_GATE}\",\n    \"checks\": [\"oracle correctness\", \"point addition correctness\", \"point doubling correctness\", \"field addition correctness\", \"field subtraction correctness\", \"field multiplication correctness\", \"field inversion correctness\", \"affine lambda witness\", \"input preservation\", \"phase cleanliness\", \"ancilla cleanup\"]\n  }},\n  \"artifact\": \"{OPS_PATH}\",\n  \"status\": \"ranked\"\n}}\n"
     );
     fs::write("score.json", body).expect("write score.json");
 }
@@ -625,7 +893,7 @@ fn main() {
         BASE_POINT.x, BASE_POINT.y
     );
     println!("  P/Q inputs : valid group points selected after build");
-    println!("  oracle     : |a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>");
+    println!("  oracle     : |a>|b>|P>|Q>|field>|0> -> |a>|b>|P>|Q>|field>|aP + bQ>|P+Q>|2P>|field witnesses>");
 
     let ops = match load_ops(OPS_PATH) {
         Ok(ops) => ops,
@@ -648,9 +916,9 @@ fn main() {
     println!("  loaded ops : {}", ops.len());
 
     let (total_qubits, num_bits, _num_regs, regs) = analyze_ops(ops.iter());
-    if regs.len() != 17 {
+    if regs.len() != REGISTER_COUNT {
         fail_and_exit(
-            &format!("expected 17 registers, got {}", regs.len()),
+            &format!("expected {REGISTER_COUNT} registers, got {}", regs.len()),
             &note,
             ops.len(),
             total_qubits,
@@ -659,6 +927,10 @@ fn main() {
     for (i, register) in regs.iter().enumerate() {
         let expected_width = if matches!(i, 4 | 7 | 10 | 13 | 16) {
             1
+        } else if i == field_reg(0, 0) {
+            FIELD_SELECTOR_WIDTH
+        } else if i >= ORACLE_REGISTER_COUNT {
+            FIELD_REGISTER_WIDTH
         } else {
             WIDTH
         };
@@ -700,6 +972,7 @@ fn main() {
         "  point-double failures   : {}",
         report.point_double_failures
     );
+    println!("  field failures          : {}", report.field_failures);
     println!(
         "  phase-garbage batches   : {}",
         report.phase_garbage_batches

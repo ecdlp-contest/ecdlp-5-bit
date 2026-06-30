@@ -81,9 +81,9 @@ The harness:
 1. builds an op stream by running the untrusted `src/shor_oracle`
    implementation;
 2. validates 9024 Fiat-Shamir shots against
-   `|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>`;
-3. checks point addition, point doubling, input preservation, phase
-   cleanliness, and ancilla cleanup;
+   `|a>|b>|P>|Q>|field inputs>|0> -> |a>|b>|P>|Q>|field inputs>|aP + bQ>|P+Q>|2P>|field witnesses>`;
+3. checks point addition, point doubling, selector-based `F_31`, `F_13`, and `F_11` field arithmetic
+   witnesses, input preservation, phase cleanliness, and ancilla cleanup;
 4. scores the run as logical qubits times the square root of rounded average
    executed Toffoli count times rounded average per-shot executed Toffoli depth.
 
@@ -120,18 +120,45 @@ register 13: output (P+Q) infinity flag (1 qubit, initially zero)
 register 14: output (2P).x        (5 qubits, initially zero)
 register 15: output (2P).y        (5 qubits, initially zero)
 register 16: output (2P) infinity flag (1 qubit, initially zero)
+register 17: field selector          (2 qubits, preserved; 0=F_31, 1=F_13, 2=F_11)
+register 18: field input x1          (5 qubits, preserved)
+register 19: field input y1          (5 qubits, preserved)
+register 20: field input x2          (5 qubits, preserved)
+register 21: field input y2          (5 qubits, preserved)
+register 22: field output x1+x2      (5 qubits, initially zero)
+register 23: field output den=x2-x1  (5 qubits, initially zero)
+register 24: field output num=y2-y1  (5 qubits, initially zero)
+register 25: field output x1*y2      (5 qubits, initially zero)
+register 26: field output den^-1, or 0 if den=0 (5 qubits, initially zero)
+register 27: field output lambda=num/den, or 0 if den=0 (5 qubits, initially zero)
+register 28: field output lambda*den (5 qubits, initially zero)
 ```
 
 The oracle must compute:
 
 ```text
-|a>|b>|P>|Q>|0> -> |a>|b>|P>|Q>|aP + bQ>|P+Q>|2P>
+|a>|b>|P>|Q>|field inputs>|0> -> |a>|b>|P>|Q>|field inputs>|aP + bQ>|P+Q>|2P>|field witnesses>
 ```
 
 Raw 5-bit scalar inputs are interpreted modulo the group order `21`, so the bit
 pattern `21` is treated as scalar `0`. The trusted evaluator supplies valid
 group points `P = sB` and `Q = tB` after the circuit is built, where `B` is the
 sampler base point above.
+
+The field-arithmetic validation registers are independent of the 5-bit curve
+oracle. The trusted evaluator samples selector-driven values in `F_31`, `F_13`,
+and `F_11`, including edge cases outside the order-21 subgroup shortcut, and
+checks each selected field:
+
+```text
+sum = x1 + x2 mod p
+den = x2 - x1 mod p
+num = y2 - y1 mod p
+product = x1 * y2 mod p
+den_inv = den^-1 mod p, or 0 when den = 0
+lambda = num * den_inv mod p, or 0 when den = 0
+lambda_den = lambda * den mod p
+```
 
 ### What Valid Means
 
@@ -143,8 +170,10 @@ A run is rejected if any of the following fails:
   elliptic-curve addition formula.
 - Point doubling correctness: the `(2P)` output registers must match the
   elliptic-curve tangent formula.
-- Input preservation: the `a`, `b`, `P`, and `Q` input registers must remain
-  unchanged.
+- Field arithmetic correctness: all selected `F_31`, `F_13`, and `F_11` witness outputs must satisfy the
+  trusted add, subtract, multiply, inverse, and affine-lambda equations.
+- Input preservation: the `a`, `b`, `P`, `Q`, `x1`, `y1`, `x2`, and `y2` input
+  registers must remain unchanged.
 - Phase cleanliness: no leftover global phase may remain across the simulated
   shot batch.
 - Ancilla cleanup: every non-register qubit must end in zero after the oracle
@@ -154,33 +183,33 @@ A run is rejected if any of the following fails:
 
 The baseline in `src/shor_oracle/mod.rs` is intentionally direct: it emits a
 reversible table baseline that computes `A = aP`, `B = bQ`, then `R = A+B`,
-also writing the explicit `P+Q` and `2P` check outputs before uncomputing
-scratch. This gives the contest a legitimate variable-base Shor ECDLP oracle
-component before replacing the tables with prime field arithmetic and adding
-QFT/sampling machinery.
+also writing the explicit `P+Q`, `2P`, and `F_31`, `F_13`, and `F_11` field-witness check outputs
+before uncomputing scratch. This gives the contest a legitimate variable-base
+Shor ECDLP oracle component before replacing the tables with prime field
+arithmetic and adding QFT/sampling machinery.
 
 Current expected static shape:
 
 | Metric | Value |
 | --- | ---: |
-| Input/output qubits | 65 |
-| Lookup scratch | 43 |
-| Logical qubits | 108 |
-| Static CCX | 118,104 |
+| Input/output qubits | 127 |
+| Lookup scratch | 49 |
+| Logical qubits | 176 |
+| Static CCX | 248,013 |
 
 Current full trusted eval:
 
 | Metric | Value |
 | --- | ---: |
 | Shots | 9024 OK |
-| Scored Toffoli count | 118,104 |
-| CCX | 118,104 |
+| Scored Toffoli count | 248,013 |
+| CCX | 248,013 |
 | CCZ | 0 |
-| Avg. executed Toffoli depth | 118,104 |
-| Clifford | 15,039 |
-| Qubits | 108 |
-| Ops | 205,453 |
-| Score | 12,755,232 |
+| Avg. executed Toffoli depth | 129,909 |
+| Clifford | 28,920 |
+| Qubits | 176 |
+| Ops | 434,550 |
+| Score | 31,591,446.412397645 |
 
 `Static CCX` is the emitted gate count in `ops.bin`. The scored Toffoli count
 is the rounded average executed `CCX + CCZ` count across the 9024 Fiat-Shamir
@@ -208,7 +237,7 @@ optimization perspectives. It must be at most 1 MiB and include these exact
 top-level anchor labels:
 
 ```text
-Target oracle: aP + bQ plus P+Q and 2P checks
+Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks
 Algorithm
 Optimization
 ```
@@ -217,7 +246,7 @@ The target anchor must branch to the two explanation anchors:
 
 ```mermaid
 flowchart TD
-  Target["Target oracle: aP + bQ plus P+Q and 2P checks"]
+  Target["Target oracle: aP + bQ plus P+Q and F_31/F_13/F_11 field arithmetic checks"]
   Algorithm["Algorithm"]
   Optimization["Optimization"]
 
@@ -276,7 +305,7 @@ The package helper enforces the official boundary before the server sees the
 package:
 
 - benchmark `shor-ecdlp-5bit`
-- validation gate `fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle`
+- validation gate `fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle_field_arithmetic_v4`
 - editable path exactly `src/shor_oracle`
 - `src/shor_oracle/architecture.mmd` commitment
 - `ops.bin` byte/hash commitment

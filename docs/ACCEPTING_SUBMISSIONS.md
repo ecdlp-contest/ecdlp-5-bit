@@ -32,7 +32,7 @@ Confirm `score.json` contains:
 status: ranked
 score_model: balanced-qubit-toffoli-depth-v1
 validation.shots: 9024
-validation.gate: fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle
+validation.gate: fiat_shamir_shor_ecdlp_5bit_variable_base_point_ops_oracle_field_arithmetic_v4
 ```
 
 The trusted run must report:
@@ -42,6 +42,7 @@ input failures          : 0
 oracle failures         : 0
 point-add failures      : 0
 point-double failures   : 0
+field failures          : 0
 phase-garbage batches   : 0
 ancilla-garbage batches : 0
 ```
