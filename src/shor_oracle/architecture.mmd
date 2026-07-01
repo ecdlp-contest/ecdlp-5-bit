@@ -17,7 +17,7 @@ flowchart TD
 
   Build --> Segment["Segmented reversible compute, copy, uncompute"]
   Segment --> ScalarPoint["Scalar multiplication uses dynamic 2^i point-power chains plus controlled affine adds"]
-  ScalarPoint --> PowerChain["Per scalar, compute 2P, 4P, 8P, 16P once and uncompute in reverse"]
+  ScalarPoint --> PowerChain["3-point pebble: w0=2P then reused as 16P, w1=4P, w2=8P; 10 doublings, 5 controlled adds"]
   ScalarPoint --> ScalarA["Pebbled held point A = aP"]
   ScalarPoint --> ScalarB["Pebbled held point B = bQ"]
   ScalarA --> PointAdd["Affine point-add computes R = A+B"]

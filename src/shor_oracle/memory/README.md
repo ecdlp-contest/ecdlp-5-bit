@@ -31,19 +31,20 @@ field truth tables. Each trusted segment computes into scratch, copies only
 required point outputs or held intermediate points, uncomputes the scratch, and
 then reuses those qubits.
 
-The current measured artifact uses the editable scalar strategy for dynamic
-point-power precompute: for each variable input point, it computes `2P`, `4P`,
-`8P`, and `16P` once, uses those powers for controlled scalar adds, and clears
-the chain in reverse. The strategy can choose store/recompute schedules through
-`scalar_api`, but cannot inspect raw point registers, emit primitive gates, or
-select table-derived point values.
+The editable scalar strategy uses a 3-point pebbling schedule instead of the
+naive 4-point chain. Two scratch points (`w1=4P`, `w2=8P`) are held throughout;
+the third (`w0`) first stores `2P`, is uncomputed after bit 1, then reloaded
+with `16P = 2·(w2)` for bit 4 before a clean reverse uncompute. This saves one
+11-qubit scratch point (11 fewer logical qubits) at the cost of two extra
+double operations, which is a net score improvement under the
+`qubits × sqrt(toffoli × depth)` model.
 
-Current static build shape for the table-free field-circuit baseline:
+Current static build shape (3-point pebble scalar strategy):
 
 ```text
-emitted ops : 25,749,133
-static CCX  : 4,624,825
-qubits      : 326
+emitted ops : 26,162,517
+static CCX  : 4,791,417
+qubits      : 315
 ```
 
 Trusted evaluator result, measured with `ECDLP_EVAL_THREADS=8`:
@@ -54,11 +55,13 @@ input failures     : 0
 oracle failures    : 0
 phase garbage      : 0 batches
 ancilla garbage    : 0 batches
-score              : 1,307,365,094.9206183
-toffoli            : 4,624,825
-toffoli depth      : 3,477,469
-clifford           : 13,980,686
+score              : 1,304,571,408.6103384
+toffoli            : 4,791,417
+toffoli depth      : 3,579,733
+clifford           : 14,202,022
 ```
+
+Model: Claude Sonnet 4.6
 
 The current trusted builder specializes multiplication by constant `3` as a
 direct Mersenne-field add of `x + rot1(x)`, avoiding the large materialized
