@@ -17,7 +17,8 @@ flowchart TD
 
   Build --> Segment["Segmented reversible compute, copy, uncompute"]
   Segment --> ScalarPoint["Scalar multiplication uses dynamic 2^i point-power chains plus controlled affine adds"]
-  ScalarPoint --> PowerChain["3-point pebble: w0=2P then reused as 16P, w1=4P, w2=8P; 10 doublings, 5 controlled adds"]
+  ScalarPoint --> PowerChain["3-point pebble: w0=2P, w1=4P then reused as 16P, w2=8P; 10 doublings, 5 controlled adds"]
+  PowerChain --> Recycle["Keep 2P live, clear the 4P slot, load 16P from 8P, then recreate 4P to clean 8P"]
   ScalarPoint --> ScalarA["Pebbled held point A = aP"]
   ScalarPoint --> ScalarB["Pebbled held point B = bQ"]
   ScalarA --> PointAdd["Affine point-add computes R = A+B"]
@@ -36,15 +37,15 @@ flowchart TD
   Segment --> Cleanup["All non-register arithmetic scratch is restored to zero before reuse"]
   Cleanup --> Ancilla["Ancilla cleanup is verified after public registers are ignored"]
 
-  Optimization --> CurrentShape["Current local shape: dynamic power-chain reversible arithmetic prototype"]
+  Optimization --> CurrentShape["Current local shape: 315 qubits, 4,734,423 Toffoli, 3,532,975 T-depth, score 1,288,292,162.6386697"]
   CurrentShape --> Contract["Package boundary allows scalar_strategy.rs scheduling through opaque handles"]
   Contract --> NoPublicWitness["No P+Q or 2P witness lanes are part of the scored ABI"]
   Contract --> NoHiddenWitness["No hidden F_17 or F_19 field-kernel validation shots are run"]
   Contract --> NoLookupTables["Submissions shall not build P/Q subgroup-index tables, direct aP+bQ tables, or replacement point-oracle tables"]
   Contract --> NoFieldTruthTables["Trusted baseline field kernels avoid enumerated truth-table synthesis"]
   Contract --> NoRawBuilder["Editable files cannot access raw qubits, raw ops, raw point registers, or builder segment boundaries"]
-  CurrentShape --> Tradeoff["Dynamic point powers increase logical qubits while cutting repeated doubling gates and depth"]
-  Tradeoff --> ReplaceLater["Future work should recover scratch inside the same opaque strategy API"]
+  CurrentShape --> Tradeoff["w1-reuse keeps the 3-scratch qubit win and lowers gates/depth versus freeing w0"]
+  Tradeoff --> ReplaceLater["Future work should reduce inverse/multiply field kernels or find a 2-scratch scalar schedule"]
 
   Preserve --> Validation["Trusted validation"]
   Outputs --> Validation
