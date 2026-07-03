@@ -2,16 +2,16 @@
 
 **Shor's ECDLP field arithmetic algorithm has not been able to run on any quantum hardware, so we have to try (starting from 5-bit).**
 
-Goal: 
+## Goal
 
 Build the cheapest reversible oracle circuit for a 5-bit toy Shor ECDLP
 oracle, scored by `score = qubits * sqrt(toffoli * toffoli_depth)`, where
 `toffoli` is the rounded average executed Toffoli count and `toffoli_depth` is
-the rounded average per-shot executed Toffoli depth. This is an important step aiming for running the full Shor's ECDLP algorithm on quantum hardware.
+the rounded average per-shot executed Toffoli depth. This is an important step aiming for running the full Shor's ECDLP algorithm on quantum hardware. We aim to publish an academic paper with leaderboard champions who contributed to this goal.
 
 ## Why This Matters
 
-This toy 5-bit track makes the expensive reversible oracle inside Shor's ECDLP
+This toy 5-bit contest makes the expensive reversible oracle inside Shor's ECDLP
 loop concrete enough to build, test, and optimize end to end. A lower oracle
 score means fewer non-Clifford resources and fewer live qubits in the part of
 the circuit that dominates repeated group arithmetic.
