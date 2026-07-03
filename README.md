@@ -1,6 +1,10 @@
-# 5-bit Shor ECDLP Oracle Baseline
+# 5-bit Shor ECDLP Oracle Quantum Circuit
 
-Goal: build the cheapest reversible oracle circuit for a 5-bit toy Shor ECDLP
+**Shor's ECDLP field arithmetic algorithm has not been able to run on any quantum hardware, so we have to try (starting from 5-bit).**
+
+Goal: 
+
+Build the cheapest reversible oracle circuit for a 5-bit toy Shor ECDLP
 oracle, scored by `score = qubits * sqrt(toffoli * toffoli_depth)`, where
 `toffoli` is the rounded average executed Toffoli count and `toffoli_depth` is
 the rounded average per-shot executed Toffoli depth. This is an important step aiming for running the full Shor's ECDLP algorithm on quantum hardware.
