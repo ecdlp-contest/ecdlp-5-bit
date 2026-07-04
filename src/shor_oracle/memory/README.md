@@ -31,20 +31,24 @@ field truth tables. Each trusted segment computes into scratch, copies only
 required point outputs or held intermediate points, uncomputes the scratch, and
 then reuses those qubits.
 
-This submission keeps the accepted 3-point pebbling strategy but changes the
-cleanup dependency order. The previous frontier held `w0=2P`, `w1=4P`, and
-`w2=8P`, recycled the `4P` slot for `16P`, then recreated `4P` to clean `8P`.
-This version computes `2P` and `4P`, clears the `2P` slot, reuses it as `8P`,
-computes `16P` into the third slot, and then turns that third slot into a `2P`
-cleanup pebble by toggling `2P` and removing `16P`. The temporary
-`16P xor 2P` bit pattern is never used as a point source or controlled addend;
-it is only an output slot on the way back to a valid `2P` cleanup value. The
-schedule uses the same three 11-qubit scratch points and the same ten
-`double_xor` calls as the accepted champion, but it shortens the trusted
-Toffoli dependency depth by changing which point registers carry the final
-cleanup dependencies.
+This submission keeps the accepted 3-point cleanup-pebble strategy and changes
+only the controlled-add placement. The baseline computes `2P` and `4P`, clears
+the `2P` slot, reuses it as `8P`, computes `16P` into the third slot, and then
+turns that third slot into a `2P` cleanup pebble by toggling `2P` and removing
+`16P`. The temporary `16P xor 2P` bit pattern is never used as a point source or
+controlled addend; it is only an output slot on the way back to a valid `2P`
+cleanup value.
 
-Current static build shape (3-point cleanup-pebble scalar strategy):
+The new schedule delays the low controlled additions until the relevant point
+powers are about to be cleaned: add `16P`, park the cleanup pebble, add `8P`,
+clean `8P`, add `4P`, clean `4P`, add `2P`, clean `2P`, and add the base point
+last. This uses the same three 11-qubit scratch points, the same ten
+`double_xor` calls, the same five controlled additions, and the same static
+Toffoli count as the latest accepted baseline, but it shortens the trusted
+Toffoli dependency depth by avoiding early accumulator dependencies on point
+registers that still need to drive later doubles.
+
+Current static build shape (late-add cleanup-pebble scalar strategy):
 
 ```text
 emitted ops : 26,097,795
@@ -60,9 +64,9 @@ input failures     : 0
 oracle failures    : 0
 phase garbage      : 0 batches
 ancilla garbage    : 0 batches
-score              : 1,288,070,437.5924695
+score              : 1,287,654,235.3966193
 toffoli            : 4,734,423
-toffoli depth      : 3,531,759
+toffoli depth      : 3,529,477
 clifford           : 14,194,938
 ```
 
