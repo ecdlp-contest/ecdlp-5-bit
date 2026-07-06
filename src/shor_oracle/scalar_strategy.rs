@@ -11,7 +11,6 @@ pub(crate) fn scalar_mul_into(ctx: &mut impl ScalarMulApi) {
 
     let w0 = ctx.alloc_point(); // 2P, then 8P
     let w1 = ctx.alloc_point(); // 4P
-    let w2 = ctx.alloc_point(); // 16P, then a cleanup pebble
 
     ctx.double_xor(base, w0);
     ctx.double_xor(w0.as_point(), w1);
@@ -19,6 +18,7 @@ pub(crate) fn scalar_mul_into(ctx: &mut impl ScalarMulApi) {
     ctx.double_xor(base, w0); // w0 ← 0
     ctx.double_xor(w1.as_point(), w0); // w0 ← 8P
 
+    let w2 = ctx.alloc_point(); // 16P, then a cleanup pebble
     ctx.double_xor(w0.as_point(), w2); // w2 ← 16P
     ctx.add_selected(w2.as_point(), ctx.scalar_bit(4));
 
