@@ -75,6 +75,13 @@ pub(crate) struct FieldOutput<'a> {
     bits: &'a [QubitId],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldModulus {
+    pub(crate) n: usize,
+    pub(crate) c: u16,
+    pub(crate) p: u16,
+}
+
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub(crate) struct FieldTargetBit {
@@ -95,6 +102,14 @@ pub(crate) struct Builder<S: OpSink> {
 
 #[allow(dead_code)]
 impl<'a, S: OpSink> FieldEmitter<'a, S> {
+    pub(crate) fn modulus(&self) -> FieldModulus {
+        FieldModulus {
+            n: WIDTH,
+            c: 1,
+            p: FIELD_MODULUS,
+        }
+    }
+
     pub(crate) fn input_bits(&self, input: FieldInput<'_>) -> Vec<Signal> {
         qubit_signals(input.bits)
     }
@@ -1018,6 +1033,23 @@ mod tests {
         (1..FIELD_MODULUS)
             .find(|candidate| (value * candidate) % FIELD_MODULUS == 1)
             .unwrap()
+    }
+
+    #[test]
+    fn field_emitter_exposes_pseudo_mersenne_modulus() {
+        let mut builder = Builder::with_sink(VecOpSink::default());
+        let emitter = FieldEmitter {
+            builder: &mut builder,
+        };
+
+        assert_eq!(
+            emitter.modulus(),
+            FieldModulus {
+                n: WIDTH,
+                c: 1,
+                p: FIELD_MODULUS,
+            }
+        );
     }
 
     #[test]

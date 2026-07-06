@@ -97,11 +97,8 @@ pattern `21` is treated as scalar `0`. The trusted evaluator supplies valid
 group points `P = sB` and `Q = tB` after the circuit is built, where `B` is the
 sampler base point above.
 
-The scored ABI intentionally has no hidden field-test registers. The only field
-in the scored circuit is the curve field `F_31`; the trusted evaluator checks
-only the oracle output and does not run hidden extra-modulus probes such as
-`field_add_kernel(F_17)` or `field_mul_kernel(F_19)`. Submissions are expected
-to implement reversible arithmetic over the five-bit `F_31` field elements.
+The scored ABI intentionally has no hidden field-test registers. Submissions
+shall implement reversible arithmetic over the five-bit `F_31` field elements.
 Point-level lookup tables are outside the contest contract even if they happen
 to pass the black-box shots. The editable code boundary gives
 `field_arithmetic.rs` only opaque per-field operands and targets and gives
@@ -145,6 +142,13 @@ trusted opaque scalar API. Trusted
 segment boundaries, primitive op emission, and compute/copy/uncompute mechanics.
 `src/shor_oracle/field_arithmetic.rs` provides the reversible `F_31` add,
 subtract, multiply, and inverse kernels through an opaque field-only emitter.
+
+For scalable pseudo-Mersenne field kernels, use `emitter.modulus()` inside the
+existing field-kernel functions. It returns `FieldModulus { n, c, p }` for
+fields of the form `p = 2^n - c`; the current contest field is
+`FieldModulus { n: 5, c: 1, p: 31 }`. The field-kernel function signatures are
+intentionally unchanged for backward compatibility with existing submissions.
+
 The network computes `A = aP`, `B = bQ`, and `R = A+B` into bounded scratch
 registers, copies the oracle output into the ABI output registers, and then runs
 the scratch network backward.

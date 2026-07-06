@@ -62,6 +62,9 @@ for optimization workflow notes.
   cleanup without accessing raw point registers or raw gates.
 - Specialize the `F_31` field kernels for `31 = 2^5 - 1` while keeping them
   scoped to their field operands rather than keyed by public point registers.
+  New scalable pseudo-Mersenne kernels should call `emitter.modulus()` and use
+  the returned `FieldModulus { n, c, p }`; the existing field-kernel function
+  signatures remain supported for older submissions.
 - Trade a small amount of scratch for fewer repeated equality checks.
 - Preserve the input registers `a`, `b`, `P`, and `Q`; the trusted evaluator
   rejects mutations.

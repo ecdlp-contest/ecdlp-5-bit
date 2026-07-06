@@ -20,6 +20,10 @@ The submitted code boundary is narrowed to
 builder owns register allocation, segment boundaries, and primitive op emission,
 and passes only opaque per-field operands, scalar-bit handles, and point handles
 to the editable source.
+The field emitter also exposes `emitter.modulus()` as an optional descriptor
+for pseudo-Mersenne kernels. Current values are `n = 5`, `c = 1`, and `p = 31`;
+existing submitted function signatures remain valid and do not need an extra
+modulus argument.
 The trusted evaluator validates 9024 Fiat-Shamir oracle shots. It does not add
 public `P+Q` / `2P` witnesses or hidden extra-modulus field-kernel probes. The
 scored source must use reversible in-place `F_31` arithmetic and arithmetic
