@@ -11,14 +11,20 @@ pub(crate) fn scalar_mul_into(ctx: &mut impl ScalarMulApi) {
 
     let w0 = ctx.alloc_point(); // 2P, then 8P
     let w1 = ctx.alloc_point(); // 4P
+    let w2 = ctx.alloc_point(); // 16P, then a cleanup pebble
 
-    ctx.double_xor(base, w0);
-    ctx.double_xor(w0.as_point(), w1);
+    ctx.double_xor(base, w0); // w0 ← 2P
+    ctx.add_selected(base, ctx.scalar_bit(0));
+
+    ctx.double_xor(w0.as_point(), w1); // w1 ← 4P
+    ctx.add_selected(w0.as_point(), ctx.scalar_bit(1));
 
     ctx.double_xor(base, w0); // w0 ← 0
-    ctx.double_xor(w1.as_point(), w0); // w0 ← 8P
+    ctx.add_selected(w1.as_point(), ctx.scalar_bit(2));
 
-    let w2 = ctx.alloc_point(); // 16P, then a cleanup pebble
+    ctx.double_xor(w1.as_point(), w0); // w0 ← 8P
+    ctx.add_selected(w0.as_point(), ctx.scalar_bit(3));
+
     ctx.double_xor(w0.as_point(), w2); // w2 ← 16P
     ctx.add_selected(w2.as_point(), ctx.scalar_bit(4));
 
@@ -26,11 +32,7 @@ pub(crate) fn scalar_mul_into(ctx: &mut impl ScalarMulApi) {
     // cleanup pebble. The invalid intermediate is never used as a source.
     ctx.double_xor(base, w2); // w2 ← 16P xor 2P
     ctx.double_xor(w0.as_point(), w2); // w2 ← 2P
-    ctx.add_selected(w0.as_point(), ctx.scalar_bit(3));
     ctx.double_xor(w1.as_point(), w0); // w0 ← 0
-    ctx.add_selected(w1.as_point(), ctx.scalar_bit(2));
     ctx.double_xor(w2.as_point(), w1); // w1 ← 0
-    ctx.add_selected(w2.as_point(), ctx.scalar_bit(1));
     ctx.double_xor(base, w2); // w2 ← 0
-    ctx.add_selected(base, ctx.scalar_bit(0));
 }
