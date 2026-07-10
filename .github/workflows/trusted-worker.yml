@@ -15,8 +15,6 @@ on:
         description: "Maximum pending submissions to process"
         required: false
         default: "1"
-  schedule:
-    - cron: "*/30 * * * *"
 
 concurrency:
   group: trusted-worker-${{ github.ref }}
