@@ -407,6 +407,7 @@ If you already have a submission id, poll it directly:
 ecdlp status <submission-id> --watch --poll-interval 10
 ecdlp logs <submission-id>
 ecdlp leaderboard
+ecdlp leaderboard --json  # complete API response for automation
 ```
 
 The server reruns the trusted worker before accepting a result. After the
