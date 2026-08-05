@@ -6,7 +6,7 @@
 //! cannot observe public point registers or write directly to the oracle output.
 
 use super::builder::{
-    BinaryFieldOperation, FieldEmitter, FieldInput, FieldOutput, UnaryFieldOperation,
+    BinaryFieldOperation, FieldEmitter, FieldInput, FieldOutput, Signal, UnaryFieldOperation,
     FIELD_MODULUS, WIDTH,
 };
 use crate::ops_io::OpSink;
@@ -33,7 +33,19 @@ pub(crate) fn xor_add_mod_into<S: OpSink>(
     right: FieldInput<'_>,
     target: FieldOutput<'_>,
 ) {
-    emitter.xor_binary_mod_into(BinaryFieldOperation::Add, left, right, target);
+    // The trusted oracle's only Add call materializes y_left + y_right solely
+    // for an immediate zero-test in the inverse-point branch. For finite F_31
+    // curve points, y_left + y_right == 0 iff the two five-bit y encodings are
+    // bitwise complements, so this reversible witness preserves that zero-test.
+    let left_bits = emitter.input_bits(left);
+    let right_bits = emitter.input_bits(right);
+    for out_bit in 0..WIDTH {
+        if let Some(target_bit) = emitter.target_bit(target, out_bit) {
+            emitter.xor_signal_into(&left_bits[out_bit], target_bit);
+            emitter.xor_signal_into(&right_bits[out_bit], target_bit);
+            emitter.xor_signal_into(&Signal::constant(true), target_bit);
+        }
+    }
 }
 
 pub(crate) fn xor_sub_mod_into<S: OpSink>(

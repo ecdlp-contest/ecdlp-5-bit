@@ -22,14 +22,14 @@ and do not increase the qubit count. There are also no hidden `F_17` or `F_19`
 field-kernel validation shots.
 
 The implementation is arithmetic-first and point-lookup-free at the contract
-level. It builds prime-field add, subtract, multiply, inverse, compare,
-zero-test, and mux operations as reversible Boolean networks. The trusted
-builder expands field kernels through ripple add/subtract circuits,
-cyclic-shift multiplication over the `2^5 - 1` modulus, and a Fermat
-exponentiation chain for inverse instead of enumerating input assignments into
-field truth tables. Each trusted segment computes into scratch, copies only
-required point outputs or held intermediate points, uncomputes the scratch, and
-then reuses those qubits.
+level. It builds the point formulas from reversible field kernels, compare,
+zero-test, and mux operations. The trusted builder expands subtraction,
+multiplication, and inverse through ripple add/subtract circuits, cyclic-shift
+multiplication over the `2^5 - 1` modulus, and a Fermat exponentiation chain
+for inverse instead of enumerating input assignments into field truth tables.
+Each trusted segment computes into scratch, copies only required point outputs
+or held intermediate points, uncomputes the scratch, and then reuses those
+qubits.
 
 This submission keeps the accepted 3-point cleanup-pebble strategy and
 table-free field arithmetic, but retimes the controlled additions into an early
@@ -43,16 +43,26 @@ uncompute: park `16P xor 2P`, remove `16P` so the third slot becomes a valid
 The temporary `16P xor 2P` bit pattern is never used as a point source or
 controlled addend; it is only an output slot on the way back to a valid `2P`
 cleanup value. This uses the same three 11-qubit scratch points, the same ten
-`double_xor` calls, the same five controlled additions, and the same static
-Toffoli count as the latest accepted baseline. The improvement comes only from
-moving the low controlled additions earlier in a monotone staircase, which trims
-the trusted Toffoli dependency tail without changing the primitive op count.
+`double_xor` calls, and the same five controlled additions as the latest
+accepted scalar baseline.
 
-Current static build shape (early-staircase cleanup-pebble scalar strategy):
+This submission adds a field-kernel call-site optimization. The trusted point
+addition code calls `xor_add_mod_into(left.y, right.y, y_sum)` only to feed
+`is_zero(y_sum)` inside the inverse-point case test; the materialized sum bits
+are not used by the affine formula. For finite points on this `F_31` curve,
+`left.y + right.y == 0 mod 31` is equivalent to the five-bit encodings being
+bitwise complements, because nonzero negation in `2^5 - 1` maps `y` to
+`11111 xor y`. The new Add kernel therefore emits the reversible witness
+`left.y xor right.y xor 11111` instead of a full modular adder. It preserves the
+zero/nonzero observable required by the point-add inverse branch and uncomputes
+cleanly under the trusted compute/copy/uncompute segment discipline.
+
+Current static build shape (early-staircase scalar strategy plus y-inverse
+witness Add kernel):
 
 ```text
-emitted ops : 26,097,795
-static CCX  : 4,734,423
+emitted ops : 26,076,249
+static CCX  : 4,724,217
 qubits      : 315
 ```
 
@@ -64,10 +74,10 @@ input failures     : 0
 oracle failures    : 0
 phase garbage      : 0 batches
 ancilla garbage    : 0 batches
-score              : 1,287,626,872.9591372
-toffoli            : 4,734,423
-toffoli depth      : 3,529,327
-clifford           : 14,194,938
+score              : 1,285,235,281.4468372
+toffoli            : 4,724,217
+toffoli depth      : 3,523,825
+clifford           : 14,182,788
 ```
 
 Model: GPT-5 / qAI
@@ -77,7 +87,7 @@ direct Mersenne-field add of `x + rot1(x)`, avoiding the large materialized
 Signal expression that previously dominated point-add and point-double slopes.
 It also skips the redundant add-from-zero in field multiplication and
 materializes the add-mod-31 reduced bits plus the all-ones reduction flag once
-instead of re-expanding the expression for every output bit. Further useful
-improvements should reduce inverse/multiply field-kernel gates or find a lower
-qubit scalar schedule while preserving the 11-register ABI, phase cleanliness,
-and ancilla cleanup.
+inside the trusted subtract/multiply internals instead of re-expanding the
+expression for every output bit. Further useful improvements should reduce
+inverse/multiply field-kernel gates or find a lower-qubit scalar schedule while
+preserving the 11-register ABI, phase cleanliness, and ancilla cleanup.

@@ -31,7 +31,7 @@ flowchart TD
   FieldFacade --> BuilderCircuits["Trusted builder expands field calls into reversible arithmetic circuits"]
   BuilderCircuits --> FieldArithmetic["Editable in-place F_31 arithmetic calls"]
   ScalarPoint --> FieldFacade
-  FieldArithmetic --> FieldAdd["add mod 31 with materialized reduced bits and all-ones flag"]
+  FieldArithmetic --> FieldAdd["add call is specialized as a y-inverse zero-test witness: y_left xor y_right xor 11111"]
   FieldArithmetic --> FieldSub["subtract mod 31"]
   FieldArithmetic --> FieldMul["multiply mod 31 by controlled cyclic shifts; first term copies directly; const 3 uses x plus rot1(x)"]
   FieldArithmetic --> FieldInv["inverse mod 31 by Fermat exponentiation, with inverse(0)=0 for invalid branches"]
@@ -40,7 +40,7 @@ flowchart TD
   Segment --> Cleanup["All non-register arithmetic scratch is restored to zero before reuse"]
   Cleanup --> Ancilla["Ancilla cleanup is verified after public registers are ignored"]
 
-  Optimization --> CurrentShape["Current local shape: 315 qubits, 4,734,423 Toffoli, 3,529,327 T-depth, score 1,287,626,872.9591372"]
+  Optimization --> CurrentShape["Current local shape: 315 qubits, 4,724,217 Toffoli, 3,523,825 T-depth, score 1,285,235,281.4468372"]
   CurrentShape --> Contract["Package boundary allows scalar_strategy.rs scheduling through opaque handles"]
   Contract --> NoPublicWitness["No P+Q or 2P witness lanes are part of the scored ABI"]
   Contract --> NoHiddenWitness["No hidden F_17 or F_19 field-kernel validation shots are run"]
@@ -48,7 +48,8 @@ flowchart TD
   Contract --> NoFieldTruthTables["Trusted baseline field kernels avoid enumerated truth-table synthesis"]
   Contract --> NoRawBuilder["Editable files cannot access raw qubits, raw ops, raw point registers, or builder segment boundaries"]
   CurrentShape --> Tradeoff["Staircase controlled-add timing keeps the 3-scratch qubit win and lowers T-depth without changing Toffoli count"]
-  Tradeoff --> ReplaceLater["Future work should reduce inverse/multiply field kernels or find a lower-qubit scalar schedule"]
+  Tradeoff --> InverseWitness["Replace the only add-mod-31 call with a reversible complement witness for the point-add inverse-case zero test"]
+  InverseWitness --> ReplaceLater["Future work should reduce inverse/multiply kernels or find a lower-qubit scalar schedule"]
 
   Preserve --> Validation["Trusted validation"]
   Outputs --> Validation
