@@ -39,10 +39,12 @@ pub(crate) fn xor_add_mod_into<S: OpSink>(
     // bitwise complements, so this reversible witness preserves that zero-test.
     let left_bits = emitter.input_bits(left);
     let right_bits = emitter.input_bits(right);
+    let perm = [3, 0, 1, 2, 4];
     for out_bit in 0..WIDTH {
         if let Some(target_bit) = emitter.target_bit(target, out_bit) {
-            emitter.xor_signal_into(&left_bits[out_bit], target_bit);
-            emitter.xor_signal_into(&right_bits[out_bit], target_bit);
+            let in_bit = perm[out_bit];
+            emitter.xor_signal_into(&left_bits[in_bit], target_bit);
+            emitter.xor_signal_into(&right_bits[in_bit], target_bit);
             emitter.xor_signal_into(&Signal::constant(true), target_bit);
         }
     }

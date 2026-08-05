@@ -53,9 +53,12 @@ are not used by the affine formula. For finite points on this `F_31` curve,
 `left.y + right.y == 0 mod 31` is equivalent to the five-bit encodings being
 bitwise complements, because nonzero negation in `2^5 - 1` maps `y` to
 `11111 xor y`. The new Add kernel therefore emits the reversible witness
-`left.y xor right.y xor 11111` instead of a full modular adder. It preserves the
-zero/nonzero observable required by the point-add inverse branch and uncomputes
-cleanly under the trusted compute/copy/uncompute segment discipline.
+`left.y xor right.y xor 11111` instead of a full modular adder. The witness
+bits are copied into the target in order `3, 0, 1, 2, 4`, which keeps the same
+zero iff inverse-point predicate while shortening the trusted zero-test
+dependency tail. It preserves the zero/nonzero observable required by the
+point-add inverse branch and uncomputes cleanly under the trusted
+compute/copy/uncompute segment discipline.
 
 Current static build shape (early-staircase scalar strategy plus y-inverse
 witness Add kernel):
@@ -74,9 +77,9 @@ input failures     : 0
 oracle failures    : 0
 phase garbage      : 0 batches
 ancilla garbage    : 0 batches
-score              : 1,285,235,281.4468372
+score              : 1,285,206,102.9292688
 toffoli            : 4,724,217
-toffoli depth      : 3,523,825
+toffoli depth      : 3,523,665
 clifford           : 14,182,788
 ```
 
