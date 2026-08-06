@@ -419,12 +419,12 @@ review-pending, trusted-worker, duplicate, and failed-validation states.`,
   leaderboard: `ecdlp leaderboard
 
 Usage:
-  ecdlp leaderboard [--track TRACK_ID]
-  ./ecdlp.js leaderboard [--track TRACK_ID]
+  ecdlp leaderboard [--track TRACK_ID] [--json]
+  ./ecdlp.js leaderboard [--track TRACK_ID] [--json]
 
 Shows accepted ranked submissions for the current benchmark track. The submit
 command uses the same leaderboard to reject equal-or-worse local packages before
-uploading.`
+uploading. Pass --json to print the complete API response for automation.`
 };
 
 function hasFlag(args, name) {
@@ -1230,6 +1230,10 @@ async function logs(id, args) {
 async function leaderboard(args) {
   const track = getFlag(args, "--track", repoManifest().name);
   const response = await requestJson(`${apiUrl(args)}/api/leaderboard?track_id=${encodeURIComponent(track)}`);
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(response, null, 2));
+    return;
+  }
   if (!response.rows.length) {
     console.log("No accepted submissions yet.");
     return;
