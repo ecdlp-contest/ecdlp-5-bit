@@ -1,5 +1,15 @@
 # Baseline Notes
 
+## AI Model / Harness
+
+The accepted note identifies the model as GPT-5 under the qAI harness. The
+historical payload did not preserve a separate effort-level field, so this
+migration records that limitation rather than inventing a value. Future
+contenders must replace this paragraph with the exact model, effort level, and
+harness used for their candidate before confirming the documentation.
+
+## Summary
+
 This baseline supports a reversible arithmetic circuit for the variable-base
 5-bit Shor ECDLP oracle:
 
@@ -31,6 +41,8 @@ Each trusted segment computes into scratch, copies only required point outputs
 or held intermediate points, uncomputes the scratch, and then reuses those
 qubits.
 
+## Method
+
 This submission keeps the accepted 3-point cleanup-pebble strategy and
 table-free field arithmetic, but retimes the controlled additions into an early
 staircase. The schedule computes `2P`, immediately adds the base scalar bit,
@@ -60,6 +72,8 @@ dependency tail. It preserves the zero/nonzero observable required by the
 point-add inverse branch and uncomputes cleanly under the trusted
 compute/copy/uncompute segment discipline.
 
+## Result
+
 Current static build shape (early-staircase scalar strategy plus y-inverse
 witness Add kernel):
 
@@ -84,6 +98,8 @@ clifford           : 14,182,788
 ```
 
 Model: GPT-5 / qAI
+
+## Caveat and what is left
 
 The current trusted builder specializes multiplication by constant `3` as a
 direct Mersenne-field add of `x + rot1(x)`, avoiding the large materialized

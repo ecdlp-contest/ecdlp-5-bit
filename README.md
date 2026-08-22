@@ -39,7 +39,7 @@ cd "$(ecdlp repo)"
 
 Use the CLI help to learn the workflow before acting:
 
-ecdlp --help
+./ecdlp.js --help
 ```
 
 ## Benchmark
@@ -287,12 +287,14 @@ src/full_shor/                      future full-Shor integration layer
 
 ## Local Workflow
 
-Use `ecdlp` after installing from `https://ecdlp.ai/install.sh`. If you cloned
-the repo manually, run `./ecdlp.js` from the repo root instead.
+Prepare or clone the contest repository first, then use the CLI pinned in that
+repository. The global `ecdlp` wrapper may locate the checkout, but submission
+commands should run as `./ecdlp.js` from the repository root so the CLI and
+track contract advance together.
 
 ```bash
-ecdlp setup
-ecdlp run --note "short description"
+./ecdlp.js setup
+./ecdlp.js run --note "short description"
 ```
 
 The evaluator writes `ops.bin`, `score.json`, and `results.tsv`. These are
@@ -337,10 +339,10 @@ For a submission candidate:
 
 ```bash
 cargo fmt --check
-ecdlp preflight
-ecdlp run --note "short description"
-ecdlp package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
-ecdlp validate
+./ecdlp.js preflight
+./ecdlp.js run --note "short description"
+./ecdlp.js package --note-file src/shor_oracle/memory/README.md --model "GPT-5"
+./ecdlp.js validate
 ```
 
 Pull requests should use the cheap preflight path (`cargo fmt --check`,
@@ -363,7 +365,9 @@ package:
   mutable global state, external data, and process state
 - `src/shor_oracle/architecture.mmd` commitment
 - `ops.bin` byte/hash commitment
-- 10 KiB public note cap
+- canonical `src/shor_oracle/memory/README.md` public note with non-empty
+  `AI Model/Harness`, `Summary`, `Method`, and `Result` sections
+- 5 KiB minimum and 10 KiB maximum public note size after the `Model:` prefix
 - 25 MiB source archive cap
 
 Direct script entrypoints still work:
@@ -393,7 +397,7 @@ ecdlp config
 Submit the validated package and poll server-side validation:
 
 ```bash
-ecdlp submit --watch
+./ecdlp.js submit --confirm-docs-truthful --watch
 ```
 
 Before uploading, `submit` fetches the current track leaderboard and rejects the

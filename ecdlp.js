@@ -10,6 +10,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const DEFAULT_API = "https://ecdlp.ai";
+const MIN_NOTE_BYTES = 5 * 1024;
 const MAX_NOTE_BYTES = 10 * 1024;
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_ARCHITECTURE_BYTES = 1024 * 1024;
@@ -205,6 +206,10 @@ Commands:
   logs         Print server-side validation logs
   leaderboard  Show accepted submissions for a track
 
+Execution model:
+  Prepare the contest repository and run its pinned ./ecdlp.js from the repo
+  root. A global ecdlp shim may delegate here but carries no separate contract.
+
 Help:
   ecdlp setup --help
   ecdlp preflight --help
@@ -245,8 +250,13 @@ Local loop:
   3. Run cargo fmt --check and ecdlp preflight.
   4. Run ecdlp run --note "short description" only when validating a score or
      submission candidate.
-  5. Run ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
-  6. Run ecdlp validate before proposing submission.
+  5. Write a detailed 5-10 KiB src/shor_oracle/memory/README.md with the
+     required AI Model/Harness, Summary, Method, and Result sections.
+  6. Run ecdlp package --note-file src/shor_oracle/memory/README.md --model "<model-name>".
+  7. Run ecdlp validate before proposing submission.
+  8. Immediately before submit, inspect the packaged note and diagram, tell the
+     user whether they are truthful and contain the relevant submission detail,
+     and confirm only when the answer is yes.
 
 Submission rule:
   A valid submission must beat the current best score, preserve the documented
@@ -257,7 +267,7 @@ When ready to submit:
   Ask the user to open ${DEFAULT_API}/account, sign in with GitHub, create an
   API key, and run:
     ecdlp login <api-key>
-    ecdlp submit --watch`,
+    ecdlp submit --confirm-docs-truthful --watch`,
 
   setup: `ecdlp setup
 
@@ -327,7 +337,9 @@ Creates:
 Requirements:
   - score.json must be ranked from a trusted local run.
   - --model is required.
-  - the note must be non-empty and at most 10 KiB after the Model prefix.
+  - the final note must be between 5 KiB and 10 KiB after the Model prefix.
+  - required non-empty Markdown sections, matched by heading keywords:
+    AI Model/Harness, Summary, Method, Result.
   - editable paths must match the track boundary.
   - src/shor_oracle/architecture.mmd must satisfy the Mermaid diagram contract.
 
@@ -353,8 +365,8 @@ This command is local and does not require an API key.`,
   submit: `ecdlp submit
 
 Usage:
-  ecdlp submit [dist/submission-metadata.json] [--source-url URL] [--watch] [--api ${DEFAULT_API}]
-  ./ecdlp.js submit [dist/submission-metadata.json] [--source-url URL] [--watch] [--api ${DEFAULT_API}]
+  ecdlp submit [dist/submission-metadata.json] --confirm-docs-truthful [--source-url URL] [--watch] [--api ${DEFAULT_API}]
+  ./ecdlp.js submit [dist/submission-metadata.json] --confirm-docs-truthful [--source-url URL] [--watch] [--api ${DEFAULT_API}]
 
 Validates the local package, checks the current leaderboard, and uploads only if
 the local score is strictly better than the best ranked score for the track.
@@ -364,6 +376,10 @@ ${DEFAULT_API}/account, create an API key, and run:
   ecdlp login <api-key>
 
 Options:
+  --confirm-docs-truthful
+                       Required contender-agent confirmation after it verbally
+                       tells the user whether the packaged note and diagram are
+                       truthful and contain the relevant submission detail
   --source-url URL       Public source or pull request URL for reviewer context
   --watch               Poll until the server reaches a terminal state
   --poll-interval SEC   Polling interval for --watch, default 10
@@ -372,8 +388,13 @@ Options:
 
 Before submitting:
   1. Run ecdlp validate.
-  2. Make sure src/shor_oracle/memory/README.md explains the field-kernel and scalar-schedule approach.
-  3. Make sure src/shor_oracle/architecture.mmd matches the submitted arithmetic implementation.`,
+  2. Inspect the packaged note and diagram against the implementation and
+     evidence, then verbally tell the user whether they are truthful and contain
+     the relevant submission detail.
+  3. Confirm benchmark.json still matches the 5-bit contest contract.
+
+The packaged note and model are immutable at submit time; rebuild the package
+instead of overriding either one.`,
 
   login: `ecdlp login
 
@@ -629,6 +650,11 @@ function archivePackageErrors(spec, metadataPath, metadata) {
       errors.push(`${metadata.archive} contains entry outside editable paths: ${entry.normalized}`);
     }
   }
+  for (const requiredPath of [spec?.defaultNoteFile, spec?.architectureDiagram].filter(Boolean).map(normalizeRepoPath)) {
+    if (!entries.some((entry) => entry.normalized === requiredPath)) {
+      errors.push(`${metadata.archive} must include required documentation file ${requiredPath}`);
+    }
+  }
   return errors;
 }
 
@@ -803,6 +829,72 @@ function utf8Bytes(text) {
   return Buffer.byteLength(text, "utf8");
 }
 
+const REQUIRED_NOTE_SECTIONS = [
+  {
+    name: "AI Model/Harness",
+    matches: (keywords) => keywords.has("model") && keywords.has("harness")
+  },
+  {
+    name: "Summary",
+    matches: (keywords) => keywords.has("summary")
+  },
+  {
+    name: "Method",
+    matches: (keywords) => keywords.has("method")
+  },
+  {
+    name: "Result",
+    matches: (keywords) => keywords.has("result") || keywords.has("results")
+  }
+];
+
+function markdownSections(text) {
+  const lines = text.split(/\r?\n/u);
+  const headings = [];
+  let fence = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const fenceMatch = lines[index].match(/^\s*(`{3,}|~{3,})/u);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      if (fence === marker) fence = null;
+      else if (!fence) fence = marker;
+      continue;
+    }
+    if (fence) continue;
+    const heading = lines[index].match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/u);
+    if (!heading) continue;
+    const normalized = heading[2]
+      .replace(/[`*_]/gu, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, " ")
+      .trim();
+    headings.push({
+      line: index,
+      level: heading[1].length,
+      keywords: new Set(normalized.split(/\s+/u).filter(Boolean))
+    });
+  }
+  return headings.map((heading, index) => {
+    const next = headings.slice(index + 1).find((candidate) => candidate.level <= heading.level);
+    const endLine = next ? next.line : lines.length;
+    return { ...heading, body: lines.slice(heading.line + 1, endLine).join("\n").trim() };
+  });
+}
+
+function submissionNoteSectionErrors(text) {
+  const sections = markdownSections(text);
+  const errors = [];
+  for (const required of REQUIRED_NOTE_SECTIONS) {
+    const matches = sections.filter((section) => required.matches(section.keywords));
+    if (matches.length === 0) {
+      errors.push(`missing required Markdown section '${required.name}'`);
+    } else if (!matches.some((section) => section.body.length > 0)) {
+      errors.push(`required Markdown section '${required.name}' must not be empty`);
+    }
+  }
+  return errors;
+}
+
 function sameStringArray(left, right) {
   if (left.length !== right.length) return false;
   return left.every((value, index) => value === right[index]);
@@ -851,12 +943,21 @@ function packageSubmission(args) {
   const model = getFlag(args, "--model", "");
   if (!model.trim()) throw new Error("--model is required");
   const noteFile = getFlag(args, "--note-file", spec.defaultNoteFile);
+  if (path.resolve(noteFile) !== path.resolve(spec.defaultNoteFile)) {
+    throw new Error(`submission note must be ${spec.defaultNoteFile}; edit and review that canonical public note instead of packaging another file`);
+  }
   if (!fs.existsSync(path.resolve(noteFile))) throw new Error(`note file not found: ${noteFile}`);
   const rawNote = fs.readFileSync(path.resolve(noteFile), "utf8");
   if (!rawNote.trim()) throw new Error("submission note must not be empty");
   const submissionNote = `Model: ${model.trim()}\n\n${rawNote}`;
   const noteBytes = utf8Bytes(submissionNote);
-  if (noteBytes > MAX_NOTE_BYTES) throw new Error(`submission note must be at most ${MAX_NOTE_BYTES} bytes (${noteBytes} bytes provided)`);
+  if (noteBytes < MIN_NOTE_BYTES || noteBytes > MAX_NOTE_BYTES) {
+    throw new Error(`submission note must be between ${MIN_NOTE_BYTES} and ${MAX_NOTE_BYTES} UTF-8 bytes after the Model prefix (${noteBytes} bytes provided)`);
+  }
+  const sectionErrors = submissionNoteSectionErrors(rawNote);
+  if (sectionErrors.length > 0) {
+    throw new Error(`submission note section validation failed:\n- ${sectionErrors.join("\n- ")}`);
+  }
 
   const score = readJson(manifest.scorePath);
   if (score.status !== "ranked") throw new Error("score.json status is not ranked");
@@ -931,6 +1032,28 @@ function defaultSubmissionPath() {
   throw new Error("submission metadata not found; run ./ecdlp.js package or pass a metadata path");
 }
 
+function packagedSubmissionNoteErrors(spec, metadataPath, metadata) {
+  const errors = [];
+  if (!metadataPath || !metadata.note) return errors;
+  const packagedPath = path.resolve(path.dirname(path.resolve(metadataPath)), metadata.note);
+  if (!fs.existsSync(packagedPath)) {
+    errors.push(`${metadata.note} is missing beside ${path.basename(metadataPath)}`);
+    return errors;
+  }
+  const packaged = fs.readFileSync(packagedPath);
+  if (metadata.noteBytes !== packaged.length) errors.push(`noteBytes does not match local ${metadata.note}`);
+  errors.push(...submissionNoteSectionErrors(packaged.toString("utf8")));
+
+  if (spec?.defaultNoteFile && fs.existsSync(path.resolve(spec.defaultNoteFile)) && typeof metadata.model === "string") {
+    const canonical = fs.readFileSync(path.resolve(spec.defaultNoteFile), "utf8");
+    const expected = Buffer.from(`Model: ${metadata.model.trim()}\n\n${canonical}`, "utf8");
+    if (!packaged.equals(expected)) {
+      errors.push(`${metadata.note} must exactly equal the Model prefix plus ${spec.defaultNoteFile}; rebuild instead of overriding the public note`);
+    }
+  }
+  return errors;
+}
+
 function validatePackage(metadata, options = {}) {
   const logs = [];
   const error = (code, message) => logs.push({ level: "error", code, message });
@@ -955,8 +1078,8 @@ function validatePackage(metadata, options = {}) {
     error("PACKAGE_ARCHIVE_BYTES", `archiveBytes must be between 1 and ${MAX_ARCHIVE_BYTES}`);
   }
   if (metadata.note !== "submission-note.md") error("PACKAGE_NOTE", "note must be submission-note.md");
-  if (!Number.isInteger(metadata.noteBytes) || metadata.noteBytes <= 0 || metadata.noteBytes > MAX_NOTE_BYTES) {
-    error("PACKAGE_NOTE_BYTES", `noteBytes must be between 1 and ${MAX_NOTE_BYTES}`);
+  if (!Number.isInteger(metadata.noteBytes) || metadata.noteBytes < MIN_NOTE_BYTES || metadata.noteBytes > MAX_NOTE_BYTES) {
+    error("PACKAGE_NOTE_BYTES", `noteBytes must be between ${MIN_NOTE_BYTES} and ${MAX_NOTE_BYTES}`);
   }
   if (typeof metadata.model !== "string" || !metadata.model.trim()) error("PACKAGE_MODEL", "model must be a non-empty string");
   if (metadata.scoreModel !== SCORE_MODEL) error("PACKAGE_SCORE_MODEL", `scoreModel must be ${SCORE_MODEL}`);
@@ -987,6 +1110,10 @@ function validatePackage(metadata, options = {}) {
     const digest = sha256File(path.resolve(metadata.artifact));
     if (metadata.artifactBytes !== stat.size) error("PACKAGE_ARTIFACT_BYTES", `artifactBytes does not match local ${metadata.artifact}`);
     if (metadata.artifactSha256 && metadata.artifactSha256.toLowerCase() !== digest) error("PACKAGE_ARTIFACT_SHA256", `artifactSha256 does not match local ${metadata.artifact}`);
+  }
+
+  for (const message of packagedSubmissionNoteErrors(spec, options.metadataPath || null, metadata)) {
+    error("PACKAGE_NOTE", message);
   }
 
   for (const message of architectureDiagramErrors(spec, options.metadataPath || null, metadata)) {
@@ -1181,7 +1308,17 @@ async function pollSubmissionStatus(id, args = []) {
 async function submit(filePath, args) {
   filePath = filePath || defaultSubmissionPath();
   const metadata = readJson(filePath);
-  const result = validatePackage(metadata, { trackId: getFlag(args, "--track", metadata.benchmark), metadataPath: filePath });
+  if (!hasFlag(args, "--confirm-docs-truthful")) {
+    throw new Error("AGENT_ACTION_REQUIRED: inspect the exact packaged submission note and architecture diagram against the packaged implementation and evidence; correct and repackage any false, stale, unsupported, misleading, or irrelevant content; explicitly tell the user whether both documents are truthful and contain the relevant submission detail; only if the answer is yes, rerun submit with --confirm-docs-truthful");
+  }
+  if (getFlag(args, "--note") || getFlag(args, "--note-file")) {
+    throw new Error("the packaged submission note is immutable; edit src/shor_oracle/memory/README.md, rebuild the package, then submit again");
+  }
+  const modelOverride = getFlag(args, "--model", "").trim();
+  if (modelOverride && modelOverride !== String(metadata.model || "").trim()) {
+    throw new Error("the packaged model is immutable; rebuild the package with the intended model");
+  }
+  const result = validatePackage(metadata, { trackId: getFlag(args, "--track", null), metadataPath: filePath });
   printValidation(result);
   if (!result.ok) process.exit(1);
   await assertScoreImprovesLeaderboard(result.trackId, result.score, args);
@@ -1189,9 +1326,9 @@ async function submit(filePath, args) {
   const payload = {
     track_id: result.trackId,
     metadata,
-    model: getFlag(args, "--model", metadata.model || ""),
+    model: metadata.model || "",
     note,
-    source_url: getFlag(args, "--source-url", ""),
+    ...(getFlag(args, "--source-url", null) ? { source_url: getFlag(args, "--source-url", null) } : {}),
     ...readArchiveInfo(args, filePath, metadata)
   };
   const response = await requestJson(`${apiUrl(args)}/api/submissions`, {

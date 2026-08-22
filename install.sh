@@ -51,5 +51,5 @@ if ! command -v ecdlp >/dev/null 2>&1; then
 fi
 say "Try:"
 say "  cd $(shell_quote "$INSTALL_DIR")"
-say "  ecdlp --help"
-say "  ecdlp package --help"
+say "  ./ecdlp.js --help"
+say "  ./ecdlp.js package --help"

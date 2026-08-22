@@ -34,16 +34,17 @@ try {
   Invoke-NativeChecked cargo fmt --check
   Invoke-NativeChecked powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
   Invoke-NativeChecked powershell -NoProfile -ExecutionPolicy Bypass -File .\benchmark.ps1 -Note $Note
-  Invoke-NativeChecked powershell -ExecutionPolicy Bypass -File tools\package-submission.ps1 -NoteFile src\shor_oracle\memory\README.md -Model $Model
+  Invoke-NativeChecked node .\ecdlp.js package --note-file src\shor_oracle\memory\README.md --model $Model
+  Invoke-NativeChecked node .\ecdlp.js validate
 
   $score = Get-Content score.json | ConvertFrom-Json
   if ($score.status -ne "ranked") {
     throw "score.json status is not ranked"
   }
-  if ($score.validation.shots -ne 9024 -or $score.validation.gate -ne "fiat_shamir_shor_ecdlp_5bit_in_place_field_arithmetic_oracle_v1") {
+  if ($score.validation.shots -ne 9024 -or $score.validation.gate -ne "fiat_shamir_shor_ecdlp_5bit_arithmetic_strategy_oracle_v2") {
     throw "score.json does not show the required 9024-shot Fiat-Shamir oracle gate"
   }
-  foreach ($requiredCheck in @("oracle correctness", "in-place F_31 field arithmetic composition", "input preservation", "phase cleanliness", "ancilla cleanup")) {
+  foreach ($requiredCheck in @("oracle correctness", "in-place F_31 field arithmetic composition", "restricted scalar strategy API", "input preservation", "phase cleanliness", "ancilla cleanup")) {
     if ($score.validation.checks -notcontains $requiredCheck) {
       throw "score.json validation.checks must include '$requiredCheck'"
     }
