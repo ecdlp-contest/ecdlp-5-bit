@@ -2,11 +2,13 @@
 
 ## AI Model / Harness
 
-The accepted note identifies the model as GPT-5 under the qAI harness. The
-historical payload did not preserve a separate effort-level field, so this
-migration records that limitation rather than inventing a value. Future
-contenders must replace this paragraph with the exact model, effort level, and
-harness used for their candidate before confirming the documentation.
+This candidate builds on the accepted GPT-5 / qAI submission (inverse-witness
+Add kernel plus permuted witness bits). The scalar-schedule retiming in this
+candidate was found with Kimi Code CLI (Kimi) by exhaustive state-space search
+over scalar point-power schedules, statically scored with the trusted
+simulator's dependency-layer depth model, and verified with the full trusted
+evaluator. No other part of the accepted field-arithmetic or strategy logic
+changed.
 
 ## Summary
 
@@ -43,20 +45,31 @@ qubits.
 
 ## Method
 
-This submission keeps the accepted 3-point cleanup-pebble strategy and
-table-free field arithmetic, but retimes the controlled additions into an early
-staircase. The schedule computes `2P`, immediately adds the base scalar bit,
-computes `4P`, immediately adds the `2P` scalar bit, clears `2P`, adds the `4P`
-scalar bit, reuses the first slot as `8P`, adds the `8P` scalar bit, computes
-`16P`, and adds the `16P` scalar bit. It then performs the same cleanup-pebble
-uncompute: park `16P xor 2P`, remove `16P` so the third slot becomes a valid
-`2P` cleanup pebble, clear `8P`, clear `4P`, and clear `2P`.
+This submission keeps the accepted 3-point scratch strategy and table-free
+field arithmetic, and retimes the point-power schedule again. An exhaustive
+state-space search over all scalar schedules (scratch slots tracked as XORs of
+point-power patterns, with `double_xor` cycling 1,2,4,8,16,11 mod 21) proves
+that three slots need at least ten `double_xor` calls and that five controlled
+additions are forced by the five scalar bits, so the gate count was already
+minimal. The remaining lever is the per-shot Toffoli dependency depth. The new
+schedule adds the base scalar bit, computes `2P`, adds the `2P` bit, computes
+`4P`, clears `2P`, and then runs the doubling chain to completion (`8P`, `16P`)
+and adds the `16P` bit immediately. Only afterwards does it add the `4P` bit,
+recompute `2P` into the freed first slot, add the `8P` bit, and cascade the
+cleanup downward (`8P` cleared by `4P`, `4P` by `2P`, `2P` by the base point).
 
-The temporary `16P xor 2P` bit pattern is never used as a point source or
-controlled addend; it is only an output slot on the way back to a valid `2P`
-cleanup value. This uses the same three 11-qubit scratch points, the same ten
-`double_xor` calls, and the same five controlled additions as the latest
-accepted scalar baseline.
+Delaying the `4P` and `8P` controlled additions until after the `16P` chain
+shortens the accumulator's dependency tail at the end of the forward tape,
+where the final `aP + bQ` point addition and both reverse tapes must wait on
+the held scalar products. Every intermediate register now holds a valid point
+encoding at all times; the previous `16P xor 2P` invalid parking pattern is
+gone. The schedule uses the same three 11-qubit scratch points, the same ten
+`double_xor` calls, and the same five controlled additions, so the Toffoli
+count and qubit count are unchanged; only the executed depth drops. The
+retimed order was selected by statically scoring 4096 minimal ten-doubling
+schedules with the exact dependency-layer depth model of the trusted
+simulator, and the witness-bit permutation was re-verified as optimal over all
+120 output permutations for the new schedule.
 
 This submission adds a field-kernel call-site optimization. The trusted point
 addition code calls `xor_add_mod_into(left.y, right.y, y_sum)` only to feed
@@ -74,7 +87,7 @@ compute/copy/uncompute segment discipline.
 
 ## Result
 
-Current static build shape (early-staircase scalar strategy plus y-inverse
+Current static build shape (late-4P/8P-add scalar strategy plus y-inverse
 witness Add kernel):
 
 ```text
@@ -91,13 +104,13 @@ input failures     : 0
 oracle failures    : 0
 phase garbage      : 0 batches
 ancilla garbage    : 0 batches
-score              : 1,285,206,102.9292688
+score              : 1,285,177,288.4930742
 toffoli            : 4,724,217
-toffoli depth      : 3,523,665
+toffoli depth      : 3,523,507
 clifford           : 14,182,788
 ```
 
-Model: GPT-5 / qAI
+Model: GPT-5 / qAI baseline, schedule retiming by Kimi Code CLI (Kimi)
 
 ## Caveat and what is left
 
